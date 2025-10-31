@@ -91,57 +91,62 @@ def calculate_initial_populations(df, i_populations, sample_id):
     return initial_populations
 
 
-def calculate_accumulated_infections(event_counts, i_populations):
-    """Calculate accumulated infections for each I[x]."""
-    accumulated_infections = {}
+def calculate_node_metrics(event_counts, i_populations):
+    """
+    Calculate all node metrics in a single pass for efficiency.
 
+    Returns a dictionary for each I[x] population containing:
+    - accumulated_infections: Total infections accumulated (I[x] appears in products)
+    - num_samples: Count of I[x] -> R + sample reactions
+    - source_sink_score: (exports - imports) / (exports + imports)
+    """
+    metrics = {i_pop: {
+        'accumulated_infections': 0,
+        'num_samples': 0,
+        'export_count': 0,
+        'import_count': 0
+    } for i_pop in i_populations}
+
+    # Single pass through all events
+    for event_type, freq in event_counts.items():
+        if '->' not in event_type:
+            continue
+
+        parts = event_type.split('->')
+        left = parts[0].strip()
+        right = parts[1].strip()
+
+        for i_pop in i_populations:
+            # Accumulated infections: I[x] appears in products
+            if i_pop in right:
+                metrics[i_pop]['accumulated_infections'] += freq
+
+            # Number of samples: I[x] -> R + sample
+            if left == i_pop and right == 'R + sample':
+                metrics[i_pop]['num_samples'] += freq
+
+            # Export: I[x] -> I[others]
+            if i_pop in left and 'I[' in right and right.startswith('I[') and right != i_pop:
+                metrics[i_pop]['export_count'] += freq
+
+            # Import: I[others] -> I[x]
+            if 'I[' in left and i_pop in right:
+                left_i_pops = re.findall(r'I\[\d+\]', left)
+                if left_i_pops and i_pop not in left_i_pops:
+                    metrics[i_pop]['import_count'] += freq
+
+    # Calculate source-sink scores
     for i_pop in i_populations:
-        count = 0
-        for event_type, freq in event_counts.items():
-            if '->' in event_type:
-                parts = event_type.split('->')
-                right = parts[1]
-                if i_pop in right:
-                    count += freq
-        accumulated_infections[i_pop] = count
-
-    return accumulated_infections
-
-
-def calculate_source_sink_scores(event_counts, i_populations):
-    """Calculate source-sink scores for each I[x]."""
-    source_sink_scores = {}
-
-    for i_pop in i_populations:
-        export_count = 0
-        import_count = 0
-
-        for event_type, freq in event_counts.items():
-            if '->' in event_type:
-                parts = event_type.split('->')
-                left = parts[0]
-                right = parts[1]
-
-                # Export: I[x] -> I[others]
-                if i_pop in left and 'I[' in right:
-                    right_stripped = right.strip()
-                    if right_stripped.startswith('I[') and right_stripped != i_pop:
-                        export_count += freq
-
-                # Import: I[others] -> I[x]
-                if 'I[' in left and i_pop in right:
-                    left_stripped = left.strip()
-                    left_i_pops = re.findall(r'I\[\d+\]', left_stripped)
-                    if left_i_pops and i_pop not in left_i_pops:
-                        import_count += freq
-
+        export_count = metrics[i_pop]['export_count']
+        import_count = metrics[i_pop]['import_count']
         total = export_count + import_count
-        if total > 0:
-            source_sink_scores[i_pop] = (export_count - import_count) / total
-        else:
-            source_sink_scores[i_pop] = 0.0
 
-    return source_sink_scores
+        if total > 0:
+            metrics[i_pop]['source_sink_score'] = (export_count - import_count) / total
+        else:
+            metrics[i_pop]['source_sink_score'] = 0.0
+
+    return metrics
 
 
 def main():
@@ -213,8 +218,7 @@ def main():
 
             # Calculate metrics for this sample
             initial_populations = calculate_initial_populations(df, i_populations, sample_id)
-            accumulated_infections = calculate_accumulated_infections(event_counts, i_populations)
-            source_sink_scores = calculate_source_sink_scores(event_counts, i_populations)
+            node_metrics = calculate_node_metrics(event_counts, i_populations)
 
             # Create graph_id
             graph_id = f"{file_prefix}_{sample_id}"
@@ -226,8 +230,9 @@ def main():
                     'graph_id': graph_id,
                     'node': node_id,
                     'Initial_Population': initial_populations[i_pop],
-                    'Accumulated_Infections': accumulated_infections[i_pop],
-                    'Source_Sink_Score': source_sink_scores[i_pop]
+                    'Accumulated_Infections': node_metrics[i_pop]['accumulated_infections'],
+                    'Num_Samples': node_metrics[i_pop]['num_samples'],
+                    'Source_Sink_Score': node_metrics[i_pop]['source_sink_score']
                 })
 
         if not all_results:
@@ -255,5 +260,8 @@ def main():
 
 if __name__ == "__main__":
     main()
-# Populations that never appear in any events are excluded entirely from the results.
-# Populations with no imports/exports get source sink score values of 0.
+
+# Notes:
+# - Populations that never appear in any events are excluded entirely from the results.
+# - Populations with no imports/exports get source_sink_score values of 0.0
+# - Populations with no samples get num_samples values of 0

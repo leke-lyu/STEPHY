@@ -44,7 +44,7 @@ TIME_UNITS="recovery_period"       # "recovery_period" or "arbitrary"
 
 # Random seed and simulation count
 RANDOM_SEED="None"                 # "None" = random, or integer for reproducibility
-NUM_SIMS=1                        # Number of BEAST2 simulations per outbreak
+NUM_SIMS=10                        # Number of BEAST2 simulations per outbreak
 
 # Export configuration
 export NUM_LOCS SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
