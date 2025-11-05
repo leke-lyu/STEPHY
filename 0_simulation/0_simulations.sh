@@ -49,8 +49,8 @@ MIGRATION_MAX=0.002                # Maximum migration rate
 SHARED_MIGRATION_RATE=false        # true = same rate for all pairs, false = random
 
 # Simulation time settings
-SIM_TIME_MIN=4                     # Minimum simulation time
-SIM_TIME_MAX=8                     # Maximum simulation time
+SIM_TIME_MIN=5                     # Minimum simulation time
+SIM_TIME_MAX=10                     # Maximum simulation time
 TIME_UNITS="recovery_period"       # "recovery_period" = scaled by 1/mean(mu), "arbitrary" = absolute
 
 # Random seed and simulation count
