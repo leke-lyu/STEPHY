@@ -18,7 +18,6 @@ import pandas as pd
 import sys
 import os
 
-
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -37,7 +36,6 @@ def str_to_bool(s):
         return s
     return s.lower() in ('true', '1', 'yes')
 
-
 def str_to_int_or_none(s):
     """
     Convert string to int or None.
@@ -51,7 +49,6 @@ def str_to_int_or_none(s):
     if s == "None" or s is None:
         return None
     return int(s)
-
 
 def get_required_env(name):
     """
@@ -91,7 +88,6 @@ CONFIG = {
     'seed': str_to_int_or_none(get_required_env('RANDOM_SEED')),
     'num_sims': int(get_required_env('NUM_SIMS')),
 }
-
 
 # ============================================================
 # PARAMETER GENERATION FUNCTIONS
@@ -164,7 +160,6 @@ def population_sizes(num_locs, pop_range, shared=False, seed=None):
 
     return pop_sizes.astype(int)
 
-
 def seed_location(num_locs, seed_loc=None, seed=None):
     """
     Generate one-hot encoded seed location (where epidemic starts).
@@ -195,7 +190,6 @@ def seed_location(num_locs, seed_loc=None, seed=None):
     seed_array[selected_location] = 1
     return seed_array
 
-
 def R0_values(num_locs, R0_range, shared=False, max_diff=None, seed=None):
     """
     Generate R0 values (basic reproduction number) for locations.
@@ -220,7 +214,6 @@ def R0_values(num_locs, R0_range, shared=False, max_diff=None, seed=None):
         R0_array = generate_constrained_values(num_locs, R0_range, max_diff, seed)
 
     return R0_array
-
 
 def recovery_rate(num_locs, mu_range, shared=False, max_diff=None, seed=None):
     """
@@ -247,7 +240,6 @@ def recovery_rate(num_locs, mu_range, shared=False, max_diff=None, seed=None):
 
     return mu_values
 
-
 def sample_rate(sample_range, seed=None):
     """
     Generate sampling rate (single shared value for all locations).
@@ -263,7 +255,6 @@ def sample_rate(sample_range, seed=None):
         np.random.seed(seed)
 
     return np.random.uniform(sample_range[0], sample_range[1])
-
 
 def migration_rates(num_locs, migration_range, shared=False, seed=None):
     """
@@ -298,7 +289,6 @@ def migration_rates(num_locs, migration_range, shared=False, seed=None):
 
     return migration_matrix
 
-
 def simulation_time(mu_values, sim_time_range, time_units='recovery_period', seed=None):
     """
     Generate simulation time.
@@ -321,7 +311,6 @@ def simulation_time(mu_values, sim_time_range, time_units='recovery_period', see
         return raw_sim_time / np.mean(mu_values)
     else:
         return raw_sim_time
-
 
 # ============================================================
 # DATA EXPORT
@@ -355,7 +344,7 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate
     # Seed location
     data['seed_location_index'] = [seed_loc_idx]
     for i, val in enumerate(seed_number):
-        data[f'seed_onehot_loc_{i}'] = [val]
+        data[f'initial_infected_individuals_loc_{i}'] = [val]
 
     # R0 values
     for i, r0 in enumerate(R0_array):
@@ -383,7 +372,6 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate
 
     df = pd.DataFrame(data)
     df.to_csv(output_file, index=False)
-
 
 # ============================================================
 # XML GENERATION
@@ -413,7 +401,7 @@ def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_valu
         '    <simulate id="tree" spec="SimulatedTree">',
         f'      <trajectory id="trajectory" spec="StochasticTrajectory" maxTime="{sim_time}" mustHave="sample>=10">',
         '      	',
-        f'        <population spec="RealParameter" id="S" value="{" ".join(map(str, pop_sizes))}"/>',
+        f'        <population spec="RealParameter" id="S" value="{" ".join(map(str, pop_sizes - seed_number))}"/>',
         f'        <population spec="RealParameter" id="I" value="{" ".join(map(str, seed_number))}"/>',
         f'        <population spec="RealParameter" id="R" value="0"/>',
         f'        <samplePopulation spec="RealParameter" id="sample" value="0"/>',
@@ -453,7 +441,6 @@ def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_valu
 
     with open(output_file, 'w') as f:
         f.write('\n'.join(xml_lines))
-
 
 # ============================================================
 # MAIN EXECUTION
@@ -505,7 +492,6 @@ def generate_parameters(config):
     )
 
     return pop_sizes, seed_number, R0_array, mu_values, sample_rate_value, beta_value, migration_rates_data, sim_time
-
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:

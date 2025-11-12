@@ -9,6 +9,7 @@ import re
 import sys
 from collections import defaultdict
 
+# traj_file related
 def load_trajectory_wide(traj_file):
     """
     Load trajectory file and convert to wide format for easy plotting.
@@ -57,6 +58,100 @@ def load_trajectory_wide(traj_file):
 
     return df_wide
 
+def get_compartment_groups(df_wide):
+    """
+    Organize species columns into compartment groups (S, I, R).
+
+    Args:
+        df_wide: Wide-format trajectory DataFrame
+
+    Returns:
+        Dictionary with keys 'S', 'I', 'R', 'sample' containing lists of column names
+
+    Example:
+        >>> df = load_trajectory_wide('0_beast2.traj')
+        >>> groups = get_compartment_groups(df)
+        >>> groups['I']
+        ['I[0]', 'I[1]', 'I[2]', ...]
+    """
+    groups = {
+        'S': [],
+        'I': [],
+        'R': [],
+        'sample': []
+    }
+
+    for col in df_wide.columns:
+        if col in ['Sample', 't']:
+            continue
+        elif col.startswith('S['):
+            groups['S'].append(col)
+        elif col.startswith('I['):
+            groups['I'].append(col)
+        elif col == 'R':
+            groups['R'].append(col)
+        elif col == 'sample':
+            groups['sample'].append(col)
+
+    # Sort location-based compartments by index
+    for key in ['S', 'I']:
+        groups[key] = sorted(groups[key], key=lambda x: int(re.search(r'\[(\d+)\]', x).group(1)))
+
+    return groups
+
+def get_sample_data(df_wide, sample_id):
+    """
+    Extract data for a specific simulation sample.
+
+    Args:
+        df_wide: Wide-format trajectory DataFrame
+        sample_id: Sample ID to extract
+
+    Returns:
+        DataFrame with only the specified sample, sorted by time
+
+    Example:
+        >>> df = load_trajectory_wide('0_beast2.traj')
+        >>> sample_0 = get_sample_data(df, 0)
+    """
+    return df_wide[df_wide['Sample'] == sample_id].sort_values('t').reset_index(drop=True)
+
+def calculate_epidemic_metrics(sample_data):
+    """
+    Calculate epidemic peak and peak timing for each I[x] population in a sample.
+
+    Args:
+        sample_data: Pre-filtered and sorted DataFrame for a single sample
+
+    Returns:
+        Dictionary mapping node_id to {'peak': max_value, 'peak_time': time_of_max}
+
+    Example:
+        >>> df = load_trajectory_wide('0_beast2.traj')
+        >>> sample_data = df[df['Sample'] == 0].sort_values('t').reset_index(drop=True)
+        >>> metrics = calculate_epidemic_metrics(sample_data)
+        >>> metrics[0]
+        {'peak': 150, 'peak_time': 45.2}
+    """
+    metrics = {}
+    i_cols = [col for col in sample_data.columns if col.startswith('I[')]
+
+    for i_col in i_cols:
+        node_id = int(re.search(r'\[(\d+)\]', i_col).group(1))
+
+        # Find the maximum value and its timing
+        max_idx = sample_data[i_col].idxmax()
+        peak_value = int(sample_data.loc[max_idx, i_col])
+        peak_time = float(sample_data.loc[max_idx, 't'])
+
+        metrics[node_id] = {
+            'peak': peak_value,
+            'peak_time': peak_time
+        }
+
+    return metrics
+
+# xml_file related
 def parse_reaction(reaction_str):
     """
     Parse reaction string into reactants and products with coefficients.
@@ -127,61 +222,46 @@ def load_reactions_from_xml(xml_file):
 
     return reaction_lookup
 
-def get_compartment_groups(df_wide):
+# parameter_csv related
+def load_parameters_from_csv(parameter_file):
     """
-    Organize species columns into compartment groups (S, I, R).
+    Load R0 and Initial_Population from parameter CSV file.
 
     Args:
-        df_wide: Wide-format trajectory DataFrame
+        parameter_file: Path to parameter CSV file
 
     Returns:
-        Dictionary with keys 'S', 'I', 'R', 'sample' containing lists of column names
+        Dictionary with keys 'R0' and 'Initial_Population', each mapping node_id to value
+
+    Raises:
+        SystemExit: If parameter file cannot be read
 
     Example:
-        >>> df = load_trajectory_wide('0_beast2.traj')
-        >>> groups = get_compartment_groups(df)
-        >>> groups['I']
-        ['I[0]', 'I[1]', 'I[2]', ...]
+        >>> params = load_parameters_from_csv('0_parameter.csv')
+        >>> params['R0'][0]
+        2.84
+        >>> params['Initial_Population'][0]
+        9388
     """
-    groups = {
-        'S': [],
-        'I': [],
-        'R': [],
-        'sample': []
-    }
+    try:
+        params_df = pd.read_csv(parameter_file)
+    except Exception as e:
+        print(f"ERROR: Failed to read parameter file: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    for col in df_wide.columns:
-        if col in ['Sample', 't']:
-            continue
-        elif col.startswith('S['):
-            groups['S'].append(col)
-        elif col.startswith('I['):
-            groups['I'].append(col)
-        elif col == 'R':
-            groups['R'].append(col)
-        elif col == 'sample':
-            groups['sample'].append(col)
+    r0_dict = {}
+    pop_dict = {}
 
-    # Sort location-based compartments by index
-    for key in ['S', 'I']:
-        groups[key] = sorted(groups[key], key=lambda x: int(re.search(r'\[(\d+)\]', x).group(1)))
+    # Extract R0 values
+    r0_cols = [col for col in params_df.columns if col.startswith('R0_loc_')]
+    for col in r0_cols:
+        node_id = int(col.replace('R0_loc_', ''))
+        r0_dict[node_id] = float(params_df[col].values[0])
 
-    return groups
+    # Extract Initial Population values
+    pop_cols = [col for col in params_df.columns if col.startswith('population_loc_')]
+    for col in pop_cols:
+        node_id = int(col.replace('population_loc_', ''))
+        pop_dict[node_id] = int(params_df[col].values[0])
 
-def get_sample_data(df_wide, sample_id):
-    """
-    Extract data for a specific simulation sample.
-
-    Args:
-        df_wide: Wide-format trajectory DataFrame
-        sample_id: Sample ID to extract
-
-    Returns:
-        DataFrame with only the specified sample, sorted by time
-
-    Example:
-        >>> df = load_trajectory_wide('0_beast2.traj')
-        >>> sample_0 = get_sample_data(df, 0)
-    """
-    return df_wide[df_wide['Sample'] == sample_id].sort_values('t').reset_index(drop=True)
-
+    return {'R0': r0_dict, 'Initial_Population': pop_dict}

@@ -29,28 +29,28 @@ SEED_LOCATION="None"               # Starting location: "None" = random, or 0 to
 
 # R0 settings (basic reproduction number)
 R0_MIN=2                           # Minimum R0 value
-R0_MAX=5                           # Maximum R0 value
+R0_MAX=6                           # Maximum R0 value
 SHARED_R0=false                    # true = same R0 for all locations, false = random
-MAX_R0_DIFF=1                      # Maximum difference in R0 across locations
+MAX_R0_DIFF=2                      # Maximum difference in R0 across locations
 
 # Recovery rate settings (mu - rate at which infected individuals recover)
 MU_MIN=0.02                        # Minimum recovery rate
 MU_MAX=0.05                        # Maximum recovery rate
 SHARED_RECOVERY_RATE=false         # true = same rate for all locations, false = random
-MAX_MU_DIFF=0.01                   # Maximum difference in recovery rate across locations
+MAX_MU_DIFF=0.005                   # Maximum difference in recovery rate across locations
 
 # Sample rate settings (rate of sampling infected individuals for sequencing)
-SAMPLE_MIN=0.0003                  # Minimum sampling rate (shared across all locations)
+SAMPLE_MIN=0.0001                  # Minimum sampling rate (shared across all locations)
 SAMPLE_MAX=0.0004                  # Maximum sampling rate (shared across all locations)
 
 # Migration rate settings (rate of movement between locations)
 MIGRATION_MIN=0.0001               # Minimum migration rate
-MIGRATION_MAX=0.002                # Maximum migration rate
+MIGRATION_MAX=0.0009                # Maximum migration rate
 SHARED_MIGRATION_RATE=false        # true = same rate for all pairs, false = random
 
 # Simulation time settings
-SIM_TIME_MIN=5                     # Minimum simulation time
-SIM_TIME_MAX=10                     # Maximum simulation time
+SIM_TIME_MIN=4                     # Minimum simulation time
+SIM_TIME_MAX=12                     # Maximum simulation time
 TIME_UNITS="recovery_period"       # "recovery_period" = scaled by 1/mean(mu), "arbitrary" = absolute
 
 # Random seed and simulation count
