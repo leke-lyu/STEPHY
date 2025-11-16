@@ -1,13 +1,25 @@
+#!/usr/bin/env python3
+"""
+Extract node-level features from epidemic trajectory simulations for phyloGNN.
+
+Generates CSV with deterministic dimensions (num_nodes × num_samples) containing:
+- Static parameters: Initial_Population, R0
+- Epidemic metrics: Epidemic_Peak, Peak_Timing
+- Event metrics: Accumulated_Infections, Num_Samples, Source_Sink_Score
+"""
+
 import pandas as pd
 import re
 import sys
 from trajectory_utils import (
     load_trajectory_wide,
     load_reactions_from_xml,
-    parse_reaction,
-    load_parameters_from_csv,
-    calculate_epidemic_metrics
+    load_R0_and_population_from_csv,
+    calculate_epidemic_peaks
 )
+
+# Pre-compile regex patterns for performance
+I_PATTERN = re.compile(r'I\[(\d+)\]')
 
 
 def classify_events_for_sample(sample_data, reaction_lookup, species_cols):
@@ -23,45 +35,51 @@ def classify_events_for_sample(sample_data, reaction_lookup, species_cols):
         DataFrame with columns ['time', 'event_type']
     """
     diff_data = sample_data[species_cols].diff()
-    events = []
 
+    # Pre-extract time values for faster access
+    time_values = sample_data['t'].values
+
+    events = []
+    # Use iloc for faster integer-based indexing (avoid loc overhead)
     for i in range(1, len(sample_data)):
-        non_zero = diff_data.loc[i][diff_data.loc[i] != 0]
+        # Use iloc instead of loc for performance
+        row = diff_data.iloc[i]
+        non_zero = row[row != 0]
+
         if len(non_zero) > 0:
             change_key = tuple(sorted(non_zero.to_dict().items()))
             events.append({
-                'time': sample_data.loc[i, 't'],
+                'time': time_values[i],
                 'event_type': reaction_lookup.get(change_key, "Unknown")
             })
 
     return pd.DataFrame(events)
 
 
-def calculate_node_metrics(event_counts, i_populations):
+def calculate_node_event_metrics(event_counts, num_nodes):
     """
-    Calculate node-level metrics from event counts.
+    Calculate event-based metrics for all nodes from reaction event counts.
 
     Args:
-        event_counts: Series of event type counts
-        i_populations: List of I[x] population names
+        event_counts: Series of event type counts (can be empty)
+        num_nodes: Total number of nodes in the network
 
     Returns:
-        Dictionary for each I[x] population containing:
-        - accumulated_infections: Total infections (I[x] appears in products)
-        - num_samples: Count of I[x] -> R + sample events
-        - source_sink_score: (exports - imports) / (exports + imports)
+        Dictionary for each node_id (0 to num_nodes-1) containing:
+        - accumulated_infections: Total infections (I[x] appears in products), 0 if no events
+        - num_samples: Count of I[x] -> R + sample events, 0 if no events
+        - source_sink_score: (exports - imports) / (exports + imports), NA if no imports/exports
     """
-    metrics = {i_pop: {
+    # Initialize metrics for ALL nodes
+    metrics = {node_id: {
         'accumulated_infections': 0,
         'num_samples': 0,
         'export_count': 0,
         'import_count': 0,
-        'source_sink_score': 0.0
-    } for i_pop in i_populations}
+        'source_sink_score': float('nan')  # NA by default
+    } for node_id in range(num_nodes)}
 
     # Parse each event once and update relevant populations
-    i_pattern = re.compile(r'I\[\d+\]')
-
     for event_type, freq in event_counts.items():
         if '->' not in event_type:
             continue
@@ -69,36 +87,47 @@ def calculate_node_metrics(event_counts, i_populations):
         left, right = event_type.split('->', 1)
         left, right = left.strip(), right.strip()
 
-        # Find all I[x] populations in left and right
-        left_i_pops = i_pattern.findall(left)
-        right_i_pops = i_pattern.findall(right)
+        # Find all I[x] populations in left and right (with node IDs)
+        left_matches = I_PATTERN.findall(left)
+        right_matches = I_PATTERN.findall(right)
+
+        left_node_ids = [int(nid) for nid in left_matches]
+        right_node_ids = [int(nid) for nid in right_matches]
 
         # Accumulated infections: I[x] appears in products
-        for i_pop in right_i_pops:
-            if i_pop in metrics:
-                metrics[i_pop]['accumulated_infections'] += freq
+        for node_id in right_node_ids:
+            if node_id < num_nodes:
+                metrics[node_id]['accumulated_infections'] += freq
 
         # Number of samples: I[x] -> R + sample
-        if right == 'R + sample' and len(left_i_pops) == 1 and left == left_i_pops[0]:
-            metrics[left_i_pops[0]]['num_samples'] += freq
+        if right == 'R + sample' and len(left_node_ids) == 1:
+            left_i = f"I[{left_node_ids[0]}]"
+            if left == left_i:
+                node_id = left_node_ids[0]
+                if node_id < num_nodes:
+                    metrics[node_id]['num_samples'] += freq
 
         # Export: I[x] -> I[y] where x != y
-        if len(left_i_pops) == 1 and len(right_i_pops) == 1:
-            left_pop = left_i_pops[0]
-            right_pop = right_i_pops[0]
-            if left == left_pop and right == right_pop and left_pop != right_pop:
-                if left_pop in metrics:
-                    metrics[left_pop]['export_count'] += freq
-                if right_pop in metrics:
-                    metrics[right_pop]['import_count'] += freq
+        if len(left_node_ids) == 1 and len(right_node_ids) == 1:
+            left_node_id = left_node_ids[0]
+            right_node_id = right_node_ids[0]
+            left_i = f"I[{left_node_id}]"
+            right_i = f"I[{right_node_id}]"
 
-    # Calculate source-sink scores
-    for i_pop in i_populations:
-        export_count = metrics[i_pop]['export_count']
-        import_count = metrics[i_pop]['import_count']
+            if left == left_i and right == right_i and left_node_id != right_node_id:
+                if left_node_id < num_nodes:
+                    metrics[left_node_id]['export_count'] += freq
+                if right_node_id < num_nodes:
+                    metrics[right_node_id]['import_count'] += freq
+
+    # Calculate source-sink scores (only if node has imports or exports)
+    for node_id in range(num_nodes):
+        export_count = metrics[node_id]['export_count']
+        import_count = metrics[node_id]['import_count']
         total = export_count + import_count
         if total > 0:
-            metrics[i_pop]['source_sink_score'] = (export_count - import_count) / total
+            metrics[node_id]['source_sink_score'] = (export_count - import_count) / total
+        # else: remains NaN
 
     return metrics
 
@@ -118,8 +147,19 @@ def main():
         # Extract file prefix for graph_id
         file_prefix = re.sub(r'_beast2\.traj$', '', traj_file.split('/')[-1])
 
-        # Load parameters (R0 and Initial_Population)
-        parameters = load_parameters_from_csv(parameter_file)
+        # Load parameters (R0 and Initial_Population) - determines number of nodes
+        parameters = load_R0_and_population_from_csv(parameter_file)
+
+        # Determine number of nodes from parameters
+        num_nodes_r0 = len(parameters['R0'])
+        num_nodes_pop = len(parameters['Initial_Population'])
+
+        if num_nodes_r0 != num_nodes_pop:
+            print(f"ERROR: Mismatch in parameter counts - R0 has {num_nodes_r0} nodes, Initial_Population has {num_nodes_pop} nodes", file=sys.stderr)
+            sys.exit(1)
+
+        num_nodes = num_nodes_r0
+        print(f"Number of nodes: {num_nodes}")
 
         # Load reactions
         reaction_lookup = load_reactions_from_xml(xml_file)
@@ -131,58 +171,47 @@ def main():
 
         # Get all unique sample IDs
         sample_ids = sorted(df_wide['Sample'].unique())
+        print(f"Number of samples: {len(sample_ids)}")
 
-        # Collect all results
+        # Collect results for all nodes × all samples
         all_results = []
 
+        # Group by sample for efficient iteration (avoids repeated filtering)
+        grouped = df_wide.groupby('Sample', sort=True)
+
         # Process each sample
-        for sample_id in sample_ids:
-            sample_data = df_wide[df_wide['Sample'] == sample_id].sort_values('t').reset_index(drop=True)
+        for sample_id, sample_data in grouped:
+            sample_data = sample_data.sort_values('t').reset_index(drop=True)
 
             # Classify events for this sample
             events_df = classify_events_for_sample(sample_data, reaction_lookup, species_cols)
 
+            # Get event counts (may be empty)
             if events_df.empty:
-                continue
+                event_counts = pd.Series(dtype=int)
+            else:
+                event_counts = events_df['event_type'].value_counts()
 
-            event_counts = events_df['event_type'].value_counts()
-
-            # Extract unique I populations
-            i_populations = set()
-            for event_type in events_df['event_type'].unique():
-                matches = re.findall(r'I\[\d+\]', event_type)
-                i_populations.update(matches)
-
-            if not i_populations:
-                continue
-
-            i_populations = sorted(i_populations, key=lambda x: int(re.search(r'\[(\d+)\]', x).group(1)))
-
-            # Calculate metrics for this sample
-            node_metrics = calculate_node_metrics(event_counts, i_populations)
-            epidemic_metrics = calculate_epidemic_metrics(sample_data)
+            # Calculate metrics for ALL nodes (even those with no events)
+            node_metrics = calculate_node_event_metrics(event_counts, num_nodes)
+            epidemic_metrics = calculate_epidemic_peaks(sample_data, num_nodes)
 
             # Create graph_id
             graph_id = f"{file_prefix}_{sample_id}"
 
-            # Add results for each node
-            for i_pop in i_populations:
-                node_id = int(re.search(r'\[(\d+)\]', i_pop).group(1))
+            # Add results for EVERY node (0 to num_nodes-1)
+            for node_id in range(num_nodes):
                 all_results.append({
                     'graph_id': graph_id,
                     'node': node_id,
                     'Initial_Population': parameters['Initial_Population'].get(node_id, 0),
                     'R0': parameters['R0'].get(node_id, 0.0),
-                    'Epidemic_Peak': epidemic_metrics.get(node_id, {}).get('peak', 0),
-                    'Peak_Timing': epidemic_metrics.get(node_id, {}).get('peak_time', 0.0),
-                    'Accumulated_Infections': node_metrics[i_pop]['accumulated_infections'],
-                    'Num_Samples': node_metrics[i_pop]['num_samples'],
-                    'Source_Sink_Score': node_metrics[i_pop]['source_sink_score']
+                    'Epidemic_Peak': epidemic_metrics[node_id]['peak'],
+                    'Peak_Timing': epidemic_metrics[node_id]['peak_time'],
+                    'Accumulated_Infections': node_metrics[node_id]['accumulated_infections'],
+                    'Num_Samples': node_metrics[node_id]['num_samples'],
+                    'Source_Sink_Score': node_metrics[node_id]['source_sink_score']
                 })
-
-        if not all_results:
-            print("ERROR: No valid data to write - all samples failed processing", file=sys.stderr)
-            sys.exit(1)
 
         # Create output dataframe
         result_df = pd.DataFrame(all_results)
@@ -190,7 +219,7 @@ def main():
         # Write output
         if output_file:
             result_df.to_csv(output_file, index=False)
-            print(f"Successfully processed {len(sample_ids)} sample(s)")
+            print(f"Successfully processed {len(sample_ids)} sample(s) × {num_nodes} nodes = {len(result_df)} rows")
             print(f"Output written to: {output_file}")
         else:
             # Print to stdout in CSV format
@@ -207,9 +236,14 @@ if __name__ == "__main__":
     main()
 
 # Notes:
-# - Uses trajectory_utils.py for shared functionality (load_trajectory_wide, load_reactions_from_xml, parse_reaction, calculate_epidemic_metrics)
-# - R0 and Initial_Population are loaded from parameter CSV file (population_loc_x and R0_loc_x columns)
+# - Uses trajectory_utils.py for shared functionality (load_trajectory_wide, load_reactions_from_xml, load_R0_and_population_from_csv, calculate_epidemic_peaks)
+# - Number of nodes is determined from parameter CSV file (length of R0 columns = length of Initial_Population columns)
+# - Output dimensions are deterministic: num_nodes × num_samples rows, 9 columns
+# - EVERY node gets a record for EVERY sample (even if no events occurred)
+# - R0 and Initial_Population are loaded from parameter CSV file (R0_loc_x and population_loc_x columns)
 # - Epidemic_Peak and Peak_Timing are calculated from max(I[x]) across the trajectory
-# - Populations that never appear in any events are excluded entirely from the results
-# - Populations with no imports/exports get source_sink_score values of 0.0
-# - Populations with no samples get num_samples values of 0
+#   - If multiple time points have the same peak value, the earliest timing is used
+#   - Nodes with no I[x] column or all zeros get peak=0, peak_time=0.0
+# - Accumulated_Infections may be 0 (if node never had infections in reaction products)
+# - Num_Samples may be 0 (if no I[x] -> R + sample events occurred)
+# - Source_Sink_Score is NaN if node has no imports/exports (not 0.0)

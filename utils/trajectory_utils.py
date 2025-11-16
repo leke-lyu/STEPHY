@@ -9,7 +9,11 @@ import re
 import sys
 from collections import defaultdict
 
-# traj_file related
+
+# ==============================================================================
+# Trajectory File Functions
+# ==============================================================================
+
 def load_trajectory_wide(traj_file):
     """
     Load trajectory file and convert to wide format for easy plotting.
@@ -116,42 +120,58 @@ def get_sample_data(df_wide, sample_id):
     """
     return df_wide[df_wide['Sample'] == sample_id].sort_values('t').reset_index(drop=True)
 
-def calculate_epidemic_metrics(sample_data):
+def calculate_epidemic_peaks(sample_data, num_nodes):
     """
-    Calculate epidemic peak and peak timing for each I[x] population in a sample.
+    Calculate epidemic peak and peak timing for each node.
+    If multiple time points have the same peak value, returns the earliest timing.
 
     Args:
         sample_data: Pre-filtered and sorted DataFrame for a single sample
+        num_nodes: Total number of nodes in the network
 
     Returns:
         Dictionary mapping node_id to {'peak': max_value, 'peak_time': time_of_max}
+        Nodes with no I[x] column or all zeros get {'peak': 0, 'peak_time': 0.0}
 
     Example:
         >>> df = load_trajectory_wide('0_beast2.traj')
         >>> sample_data = df[df['Sample'] == 0].sort_values('t').reset_index(drop=True)
-        >>> metrics = calculate_epidemic_metrics(sample_data)
+        >>> metrics = calculate_epidemic_peaks(sample_data, num_nodes=10)
         >>> metrics[0]
         {'peak': 150, 'peak_time': 45.2}
     """
-    metrics = {}
-    i_cols = [col for col in sample_data.columns if col.startswith('I[')]
+    # Initialize metrics for ALL nodes (peak=0, time=0.0 by default)
+    metrics = {node_id: {'peak': 0, 'peak_time': 0.0} for node_id in range(num_nodes)}
 
-    for i_col in i_cols:
-        node_id = int(re.search(r'\[(\d+)\]', i_col).group(1))
+    # Get available I[x] columns once (cache for performance)
+    available_i_cols = {col for col in sample_data.columns if col.startswith('I[')}
 
-        # Find the maximum value and its timing
-        max_idx = sample_data[i_col].idxmax()
-        peak_value = int(sample_data.loc[max_idx, i_col])
-        peak_time = float(sample_data.loc[max_idx, 't'])
+    # Process each node
+    for node_id in range(num_nodes):
+        i_col = f'I[{node_id}]'
 
-        metrics[node_id] = {
-            'peak': peak_value,
-            'peak_time': peak_time
-        }
+        # Check if column exists using cached set (faster than checking columns)
+        if i_col in available_i_cols:
+            peak_value = int(sample_data[i_col].max())
+
+            if peak_value > 0:
+                # Find earliest peak occurrence (data is already sorted by time)
+                # Use idxmax for fast lookup, which returns first occurrence
+                earliest_peak_idx = sample_data[i_col].idxmax()
+                peak_time = float(sample_data.loc[earliest_peak_idx, 't'])
+
+                metrics[node_id] = {
+                    'peak': peak_value,
+                    'peak_time': peak_time
+                }
 
     return metrics
 
-# xml_file related
+
+# ==============================================================================
+# XML Reaction Functions
+# ==============================================================================
+
 def parse_reaction(reaction_str):
     """
     Parse reaction string into reactants and products with coefficients.
@@ -222,8 +242,12 @@ def load_reactions_from_xml(xml_file):
 
     return reaction_lookup
 
-# parameter_csv related
-def load_parameters_from_csv(parameter_file):
+
+# ==============================================================================
+# Parameter CSV Functions
+# ==============================================================================
+
+def load_R0_and_population_from_csv(parameter_file):
     """
     Load R0 and Initial_Population from parameter CSV file.
 
@@ -237,7 +261,7 @@ def load_parameters_from_csv(parameter_file):
         SystemExit: If parameter file cannot be read
 
     Example:
-        >>> params = load_parameters_from_csv('0_parameter.csv')
+        >>> params = load_R0_and_population_from_csv('0_parameter.csv')
         >>> params['R0'][0]
         2.84
         >>> params['Initial_Population'][0]
@@ -249,19 +273,69 @@ def load_parameters_from_csv(parameter_file):
         print(f"ERROR: Failed to read parameter file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    r0_dict = {}
-    pop_dict = {}
-
-    # Extract R0 values
+    # Extract R0 values (vectorized for performance)
     r0_cols = [col for col in params_df.columns if col.startswith('R0_loc_')]
-    for col in r0_cols:
-        node_id = int(col.replace('R0_loc_', ''))
-        r0_dict[node_id] = float(params_df[col].values[0])
+    r0_dict = {
+        int(col.replace('R0_loc_', '')): float(params_df[col].values[0])
+        for col in r0_cols
+    }
 
-    # Extract Initial Population values
+    # Extract Initial Population values (vectorized for performance)
     pop_cols = [col for col in params_df.columns if col.startswith('population_loc_')]
-    for col in pop_cols:
-        node_id = int(col.replace('population_loc_', ''))
-        pop_dict[node_id] = int(params_df[col].values[0])
+    pop_dict = {
+        int(col.replace('population_loc_', '')): int(params_df[col].values[0])
+        for col in pop_cols
+    }
 
     return {'R0': r0_dict, 'Initial_Population': pop_dict}
+
+
+def load_migration_rate_from_csv(parameter_file):
+    """
+    Load migration rates from parameter CSV file.
+
+    Args:
+        parameter_file: Path to parameter CSV file
+
+    Returns:
+        Nested dictionary mapping {from_node: {to_node: rate}}
+        Example: migration_rates[0][1] = rate from location 0 to location 1
+
+    Raises:
+        SystemExit: If parameter file cannot be read
+
+    Example:
+        >>> migration_rates = load_migration_rate_from_csv('0_parameter.csv')
+        >>> migration_rates[0][1]  # Rate from loc 0 to loc 1
+        0.000717818
+        >>> migration_rates[1][0]  # Rate from loc 1 to loc 0
+        0.000998965
+    """
+    try:
+        params_df = pd.read_csv(parameter_file)
+    except Exception as e:
+        print(f"ERROR: Failed to read parameter file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Extract migration rate columns (format: migration_loc_x_to_loc_y)
+    migration_cols = [col for col in params_df.columns if col.startswith('migration_loc_')]
+
+    # Build nested dictionary: {from_node: {to_node: rate}}
+    migration_dict = {}
+    pattern = re.compile(r'migration_loc_(\d+)_to_loc_(\d+)')
+
+    # Parse all migration columns
+    for col in migration_cols:
+        match = pattern.match(col)
+        if match:
+            from_node = int(match.group(1))
+            to_node = int(match.group(2))
+            rate = float(params_df[col].values[0])
+
+            # Initialize nested dict if needed
+            if from_node not in migration_dict:
+                migration_dict[from_node] = {}
+
+            migration_dict[from_node][to_node] = rate
+
+    return migration_dict
