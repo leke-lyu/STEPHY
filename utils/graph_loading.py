@@ -15,7 +15,43 @@ import pickle
 import pandas as pd
 import dgl
 import torch
+import numpy as np
 from pathlib import Path
+
+
+def parse_patristic_distance_array(distance_string):
+    """
+    Parse patristic distance array string and compute summary statistics.
+
+    Returns dict with: min, q25, median, q75, max, mean, std, count
+    If input is NaN/empty, all values are NaN.
+    """
+    nan_stats = {
+        'min': np.nan, 'q25': np.nan, 'median': np.nan, 'q75': np.nan,
+        'max': np.nan, 'mean': np.nan, 'std': np.nan, 'count': np.nan
+    }
+
+    # Handle NaN or empty values
+    if pd.isna(distance_string) or distance_string == '':
+        return nan_stats
+
+    try:
+        # Remove brackets and split by whitespace/tabs
+        clean_string = str(distance_string).strip('[]')
+        values = np.array([float(x) for x in clean_string.split()])
+
+        return {
+            'min': np.min(values),
+            'q25': np.percentile(values, 25),
+            'median': np.median(values),
+            'q75': np.percentile(values, 75),
+            'max': np.max(values),
+            'mean': np.mean(values),
+            'std': np.std(values),
+            'count': len(values)
+        }
+    except:
+        return nan_stats
 
 
 def find_graph_files(input_folder):
@@ -77,6 +113,17 @@ def load_graph_from_csv(node_file, edge_file):
                 graph_edges['migration_rate'].values,
                 dtype=torch.float32
             )
+
+        if 'patristic_distance' in graph_edges.columns:
+            # Parse patristic distance arrays and compute summary statistics
+            stats_list = graph_edges['patristic_distance'].apply(parse_patristic_distance_array)
+
+            # Add each statistic as a separate edge feature
+            stat_names = ['min', 'q25', 'median', 'q75', 'max', 'mean', 'std', 'count']
+            for stat in stat_names:
+                g.edata[f'patristic_distance_{stat}'] = torch.tensor(
+                    [s[stat] for s in stats_list], dtype=torch.float32
+                )
 
         graphs[graph_id] = g
 
