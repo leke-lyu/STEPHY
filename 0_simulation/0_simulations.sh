@@ -21,9 +21,9 @@
 # ============================================================
 
 # Location and population settings
-NUM_LOCS=10                        # Number of outbreak locations/demes
-POP_MIN=1000                       # Minimum population size per location
-POP_MAX=10000                       # Maximum population size per location
+NUM_LOCS=16                        # Number of outbreak locations/demes
+POP_MIN=300                      # Minimum population size per location
+POP_MAX=3000                       # Maximum population size per location
 SHARED_POP_SIZE=false              # true = same size for all locations, false = random
 SEED_LOCATION="None"               # Starting location: "None" = random, or 0 to NUM_LOCS-1
 
@@ -34,28 +34,28 @@ SHARED_R0=false                    # true = same R0 for all locations, false = r
 MAX_R0_DIFF=2                      # Maximum difference in R0 across locations
 
 # Recovery rate settings (mu - rate at which infected individuals recover)
-MU_MIN=0.02                        # Minimum recovery rate
-MU_MAX=0.05                        # Maximum recovery rate
+MU_MIN=0.01                        # Minimum recovery rate
+MU_MAX=0.04                        # Maximum recovery rate
 SHARED_RECOVERY_RATE=false         # true = same rate for all locations, false = random
 MAX_MU_DIFF=0.005                   # Maximum difference in recovery rate across locations
 
 # Sample rate settings (rate of sampling infected individuals for sequencing)
-SAMPLE_MIN=0.0001                  # Minimum sampling rate (shared across all locations)
-SAMPLE_MAX=0.0004                  # Maximum sampling rate (shared across all locations)
+SAMPLE_MIN=0.003                  # Minimum sampling rate (shared across all locations)
+SAMPLE_MAX=0.003                 # Maximum sampling rate (shared across all locations)
 
 # Migration rate settings (rate of movement between locations)
 MIGRATION_MIN=0.0001               # Minimum migration rate
-MIGRATION_MAX=0.0009                # Maximum migration rate
+MIGRATION_MAX=0.0025              # Maximum migration rate
 SHARED_MIGRATION_RATE=false        # true = same rate for all pairs, false = random
 
 # Simulation time settings
-SIM_TIME_MIN=4                     # Minimum simulation time
-SIM_TIME_MAX=12                     # Maximum simulation time
+SIM_TIME_MIN=10                     # Minimum simulation time
+SIM_TIME_MAX=20                     # Maximum simulation time
 TIME_UNITS="recovery_period"       # "recovery_period" = scaled by 1/mean(mu), "arbitrary" = absolute
 
 # Random seed and simulation count
 RANDOM_SEED="None"                 # "None" = random seed, or integer for reproducibility
-NUM_SIMS=10                        # Number of BEAST2 simulations to generate per outbreak
+NUM_SIMS=5                        # Number of BEAST2 simulations to generate per outbreak
 
 # Export all configuration variables to environment
 export NUM_LOCS SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS

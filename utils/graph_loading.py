@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 """
-Graph Loading Script for DGL
+Graph Loading Module for DGL
 
 Load node and edge CSV files and create DGL graphs.
-
-Usage:
-    python graph_loading.py --input_folder /path/to/folder --output graphs.bin
 """
 
-import os
-import argparse
 import traceback
-import pickle
 import pandas as pd
 import dgl
 import torch
@@ -101,7 +95,9 @@ def load_graph_from_csv(node_file, edge_file):
         graph_nodes = graph_nodes.sort_values('node')
         node_feature_cols = ['Initial_Population', 'R0', 'Epidemic_Peak',
                             'Peak_Timing', 'Accumulated_Infections',
-                            'Num_Samples', 'Source_Sink_Score']
+                            'Num_Samples', 'Source_Sink_Score',
+                            'Monophyletic_Groups', 'Earliest_Sample_Time',
+                            'Median_Sample_Time', 'Latest_Sample_Time']
 
         for col in node_feature_cols:
             if col in graph_nodes.columns:
@@ -123,6 +119,14 @@ def load_graph_from_csv(node_file, edge_file):
             for stat in stat_names:
                 g.edata[f'patristic_distance_{stat}'] = torch.tensor(
                     [s[stat] for s in stats_list], dtype=torch.float32
+                )
+
+        # Add DTW-based edge features
+        dtw_feature_cols = ['dtw_distance', 'dtw_lag_mean', 'dtw_lag_std']
+        for col in dtw_feature_cols:
+            if col in graph_edges.columns:
+                g.edata[col] = torch.tensor(
+                    graph_edges[col].values, dtype=torch.float32
                 )
 
         graphs[graph_id] = g
@@ -154,57 +158,3 @@ def load_all_graphs(input_folder):
     print(f"{'='*50}")
 
     return all_graphs
-
-
-def save_graphs(graphs, output_path):
-    """Save graphs to DGL format."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    graph_ids = list(graphs.keys())
-    graph_list = list(graphs.values())
-
-    dgl.save_graphs(str(output_path), graph_list)
-
-    metadata = {'num_graphs': len(graphs), 'graph_ids': graph_ids}
-    metadata_path = output_path.with_suffix('.pkl')
-    with open(metadata_path, 'wb') as f:
-        pickle.dump(metadata, f)
-
-    print(f"✓ Saved graphs to {output_path}")
-    print(f"✓ Saved metadata to {metadata_path}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description='Load graphs from CSV files into DGL format')
-    parser.add_argument('--input_folder', type=str, required=True,
-                       help='Path to folder containing node and edge CSV files')
-    parser.add_argument('--output', type=str, default=None,
-                       help='Path to save the graphs')
-
-    args = parser.parse_args()
-
-    if not os.path.exists(args.input_folder):
-        print(f"Error: Input folder '{args.input_folder}' does not exist")
-        return
-
-    graphs = load_all_graphs(args.input_folder)
-
-    if graphs:
-        print("\nGraph Summary:")
-        for graph_id, g in list(graphs.items())[:5]:
-            print(f"  {graph_id}: {g.num_nodes()} nodes, {g.num_edges()} edges")
-            print(f"    Node features: {list(g.ndata.keys())}")
-            print(f"    Edge features: {list(g.edata.keys())}")
-
-        if len(graphs) > 5:
-            print(f"  ... and {len(graphs) - 5} more graphs")
-
-    if args.output and graphs:
-        save_graphs(graphs, args.output)
-
-    return graphs
-
-
-if __name__ == "__main__":
-    main()
