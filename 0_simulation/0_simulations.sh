@@ -45,7 +45,7 @@ SAMPLE_MAX=0.003                 # Maximum sampling rate (shared across all loca
 
 # Migration rate settings (rate of movement between locations)
 MIGRATION_MIN=0.0001               # Minimum migration rate
-MIGRATION_MAX=0.0025              # Maximum migration rate
+MIGRATION_MAX=0.005              # Maximum migration rate
 SHARED_MIGRATION_RATE=false        # true = same rate for all pairs, false = random
 
 # Simulation time settings
@@ -55,7 +55,7 @@ TIME_UNITS="recovery_period"       # "recovery_period" = scaled by 1/mean(mu), "
 
 # Random seed and simulation count
 RANDOM_SEED="None"                 # "None" = random seed, or integer for reproducibility
-NUM_SIMS=5                        # Number of BEAST2 simulations to generate per outbreak
+NUM_SIMS=1                        # Number of BEAST2 simulations to generate per outbreak
 
 # Export all configuration variables to environment
 export NUM_LOCS SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
