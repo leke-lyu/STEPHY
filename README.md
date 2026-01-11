@@ -1,4 +1,4 @@
-# phyloGNN
+# phyNetics
 
 Graph Neural Network (GNN) for learning migration patterns from pathogen phylogenies.
 
