@@ -45,7 +45,7 @@ SAMPLE_MAX=0.003                 # Maximum sampling rate (shared across all loca
 
 # Migration rate settings (rate of movement between locations)
 MIGRATION_MIN=0.0001               # Minimum migration rate
-MIGRATION_MAX=0.005              # Maximum migration rate
+MIGRATION_MAX=0.003              # Maximum migration rate
 SHARED_MIGRATION_RATE=false        # true = same rate for all pairs, false = random
 
 # Simulation time settings
