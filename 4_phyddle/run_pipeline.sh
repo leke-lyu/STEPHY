@@ -1,15 +1,14 @@
 #!/bin/bash
 #
-# Batch training pipeline for phyddle R0 estimation
+# Simplified Phyddle Pipeline for R0 Estimation
+# - Uses phyddle for data formatting (HDF5 tensors)
+# - Custom CNN training (no auxiliary data, point estimates only)
 #
 # Usage:
-#   bash run_pipeline.sh inputfolder_0 inputfolder_1 ... outfolder
+#   bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
 #
 # Example:
-#   bash run_pipeline.sh /Users/lukelyu/Desktop/epidata/500_1_MM0.002 \
-#                        /Users/lukelyu/Desktop/epidata/500_1_MM0.0025 \
-#                        /Users/lukelyu/Desktop/epidata/500_1_MM0.003 \
-#                        ./results
+#   bash run_pipeline.sh /path/to/epidata/500_1_MM0.002 ./results
 #
 
 set -e  # Exit on error
@@ -72,7 +71,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 1: Convert to phyddle format
     # ==========================================
-    echo "[Step 1/6] Converting BEAST2 data to phyddle format..."
+    echo "[Step 1/5] Converting BEAST2 data to phyddle format..."
     python3 "$SCRIPT_DIR/convert_to_phyddle.py" \
         --input_dir "$INPUT_FOLDER" \
         --output_dir "$SIM_DATA_DIR" \
@@ -85,7 +84,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 2: Get tree sizes
     # ==========================================
-    echo "[Step 2/6] Analyzing tree sizes..."
+    echo "[Step 2/5] Analyzing tree sizes..."
 
     # Run tree_size.py and capture output
     TREE_SIZE_OUTPUT=$(python3 "$SCRIPT_DIR/tree_size.py" "$SIM_DATA_DIR")
@@ -108,7 +107,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 3: Create modified config files
     # ==========================================
-    echo "[Step 3/6] Creating config files with tree size parameters..."
+    echo "[Step 3/5] Creating config files with tree size parameters..."
 
     # Create config_format.py for this dataset
     cat > "$WORK_DIR/config_format.py" << EOF
@@ -220,7 +219,7 @@ EOF
     # ==========================================
     # Step 4: Run phyddle formatting
     # ==========================================
-    echo "[Step 4/6] Running phyddle formatting (creating HDF5 tensors)..."
+    echo "[Step 4/5] Running phyddle formatting (creating HDF5 tensors)..."
 
     # Change to working directory and run phyddle
     cd "$WORK_DIR"
@@ -232,22 +231,12 @@ EOF
     # ==========================================
     # Step 5: Run training
     # ==========================================
-    echo "[Step 5/6] Training neural network..."
+    echo "[Step 5/5] Training neural network..."
 
     # Set PYTHONPATH so train.py imports config.py from current directory first
     PYTHONPATH="$WORK_DIR:$SCRIPT_DIR:$PYTHONPATH" python3 "$SCRIPT_DIR/train.py"
 
     echo "Training complete."
-    echo ""
-
-    # ==========================================
-    # Step 6: Visualize results
-    # ==========================================
-    echo "[Step 6/6] Generating visualizations..."
-
-    python3 "$SCRIPT_DIR/visualize_results.py"
-
-    echo "Visualization complete."
     echo ""
 
     # Extract results for summary table

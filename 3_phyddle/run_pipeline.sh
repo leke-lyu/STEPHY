@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# Batch training pipeline for phyddle R0 estimation (full phyddle with aux data)
+# Full Phyddle Pipeline for R0 Estimation
+# - Uses phyddle library for formatting, training, and estimation
+# - Includes auxiliary data and confidence prediction intervals (CPI)
 #
 # Usage:
-#   bash run_pipeline.sh inputfolder_0 inputfolder_1 ... outfolder
+#   bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
 #
 # Example:
-#   bash run_pipeline.sh /Users/lukelyu/Desktop/epidata/500_1_MM0.002 \
-#                        /Users/lukelyu/Desktop/epidata/500_1_MM0.0025 \
-#                        ./results
+#   bash run_pipeline.sh /path/to/epidata/500_1_MM0.002 ./results
 #
 
 set -e  # Exit on error
@@ -71,7 +71,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 1: Convert to phyddle format
     # ==========================================
-    echo "[Step 1/5] Converting BEAST2 data to phyddle format..."
+    echo "[Step 1/4] Converting BEAST2 data to phyddle format..."
     python3 "$SCRIPT_DIR/convert_to_phyddle.py" \
         --input_dir "$INPUT_FOLDER" \
         --output_dir "$SIM_DATA_DIR" \
@@ -84,7 +84,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 2: Get tree sizes
     # ==========================================
-    echo "[Step 2/5] Analyzing tree sizes..."
+    echo "[Step 2/4] Analyzing tree sizes..."
 
     # Run tree_size.py and capture output
     TREE_SIZE_OUTPUT=$(python3 "$SCRIPT_DIR/tree_size.py" "$SIM_DATA_DIR")
@@ -107,7 +107,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     # ==========================================
     # Step 3: Create modified config file
     # ==========================================
-    echo "[Step 3/5] Creating config file with tree size parameters..."
+    echo "[Step 3/4] Creating config file with tree size parameters..."
 
     # Create config.py for this dataset
     cat > "$WORK_DIR/config.py" << EOF
@@ -203,23 +203,13 @@ EOF
     # ==========================================
     # Step 4: Run phyddle (Format, Train, Estimate)
     # ==========================================
-    echo "[Step 4/5] Running phyddle (Format, Train, Estimate)..."
+    echo "[Step 4/4] Running phyddle (Format, Train, Estimate)..."
 
     # Change to working directory and run phyddle
     cd "$WORK_DIR"
     python3 -m phyddle -c config.py -s FTE
 
     echo "Phyddle complete."
-    echo ""
-
-    # ==========================================
-    # Step 5: Visualize results
-    # ==========================================
-    echo "[Step 5/5] Generating visualizations..."
-
-    python3 "$SCRIPT_DIR/visualize_results.py"
-
-    echo "Visualization complete."
     echo ""
 
     # Extract results for summary table

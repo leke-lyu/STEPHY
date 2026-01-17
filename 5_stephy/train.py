@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import json
 from pathlib import Path
 from copy import deepcopy
 
@@ -21,8 +20,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score
-import matplotlib.pyplot as plt
 from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
@@ -44,6 +41,8 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=None, help='Override learning_rate')
     parser.add_argument('--seed', type=int, default=None, help='Override random_seed')
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
+    parser.add_argument('--label_scale', choices=['linear', 'log'], default=None,
+                        help='Override label scale (linear or log)')
     return parser.parse_args()
 
 
@@ -53,6 +52,22 @@ def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+
+
+def apply_label_transform(graphs, label_scale):
+    """
+    Apply label transformation (log or linear) to R0 values.
+
+    Args:
+        graphs: List of (graph, id, locs, height) tuples
+        label_scale: 'linear' (no transform) or 'log' (log transform)
+    """
+    if label_scale == 'log':
+        for g, *_ in graphs:
+            r0 = g.ndata['R0']
+            # Ensure positive values for log transform
+            r0 = torch.clamp(r0, min=1e-8)
+            g.ndata['R0'] = torch.log(r0)
 
 
 def normalize_labels(train_graphs, val_graphs, test_graphs):
@@ -109,7 +124,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
 
 
 def evaluate(model, dataloader, criterion, device):
-    """Evaluate model on batched graphs."""
+    """Evaluate model on batched graphs. Returns loss and predictions."""
     model.eval()
     total_loss = 0
     total_nodes = 0
@@ -136,57 +151,7 @@ def evaluate(model, dataloader, criterion, device):
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
 
-    r2 = r2_score(all_labels, all_preds)
-    corr = np.corrcoef(all_labels, all_preds)[0, 1]
-
-    return avg_loss, r2, corr, all_preds, all_labels
-
-
-def plot_results(train_history, test_preds, test_labels, output_dir, best_epoch):
-    """Generate result plots."""
-    output_dir = Path(output_dir)
-
-    # Training curve
-    fig, ax = plt.subplots(figsize=(10, 5))
-    epochs = range(1, len(train_history['train_loss']) + 1)
-    ax.plot(epochs, train_history['train_loss'], 'b-', alpha=0.7, label='Train')
-    ax.plot(epochs, train_history['val_loss'], 'r-', linewidth=2, label='Validation')
-    ax.axvline(x=best_epoch + 1, color='green', linestyle='--', alpha=0.7,
-               label=f'Best ({best_epoch + 1})')
-    ax.set_xlabel('Epoch', fontsize=12)
-    ax.set_ylabel('Loss (MSE)', fontsize=12)
-    ax.set_title('CBLV-GAT Training', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_dir / 'training_curve.pdf', bbox_inches='tight', dpi=300)
-    plt.close()
-
-    # Test scatter plot
-    fig, ax = plt.subplots(figsize=(7, 6))
-    ax.scatter(test_labels, test_preds, alpha=0.6, color='steelblue', s=50, edgecolor='white')
-    min_val = min(test_labels.min(), test_preds.min())
-    max_val = max(test_labels.max(), test_preds.max())
-    ax.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
-    ax.set_xlabel('True R0', fontsize=12)
-    ax.set_ylabel('Predicted R0', fontsize=12)
-    ax.set_title('CBLV-GAT - R0 Prediction', fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3)
-
-    r2 = r2_score(test_labels, test_preds)
-    corr = np.corrcoef(test_labels, test_preds)[0, 1]
-    mse = np.mean((test_labels - test_preds) ** 2)
-    n_samples = len(test_labels)
-
-    stats = f'n = {n_samples} samples\nR² = {r2:.4f}\nr = {corr:.4f}\nMSE = {mse:.4f}'
-    ax.text(0.05, 0.95, stats, transform=ax.transAxes, va='top', fontsize=10,
-            bbox=dict(boxstyle='round', fc='wheat', alpha=0.5))
-
-    plt.tight_layout()
-    plt.savefig(output_dir / 'r0_test.pdf', bbox_inches='tight', dpi=300)
-    plt.close()
-
-    print(f"Saved: {output_dir}/training_curve.pdf, {output_dir}/r0_test.pdf")
+    return avg_loss, all_preds, all_labels
 
 
 def main():
@@ -204,6 +169,11 @@ def main():
         config['train']['learning_rate'] = args.lr
     if args.seed:
         config['train']['random_seed'] = args.seed
+    if args.label_scale:
+        config['data']['label_scale'] = args.label_scale
+
+    # Get label scale setting
+    label_scale = config['data'].get('label_scale', 'linear')
 
     # Setup
     output_dir = Path(args.output_dir)
@@ -215,10 +185,6 @@ def main():
     print(f"subtree_width: {args.subtree_width}")
 
     set_seed(config['train']['random_seed'])
-
-    # Save config
-    with open(output_dir / 'config.json', 'w') as f:
-        json.dump(config, f, indent=2)
 
     # Build graphs
     print("\nBuilding graphs...")
@@ -254,8 +220,16 @@ def main():
 
     print(f"  Train: {len(train_graphs)}, Val: {len(val_graphs)}, Test: {len(test_graphs)}")
 
+    # Apply label transform (log or linear)
+    print(f"  Label scale: {label_scale}")
+    if label_scale == 'log':
+        apply_label_transform(train_graphs, label_scale)
+        apply_label_transform(val_graphs, label_scale)
+        apply_label_transform(test_graphs, label_scale)
+
     # Normalize R0 labels using training set statistics
     label_norm = normalize_labels(train_graphs, val_graphs, test_graphs)
+    label_norm['scale'] = label_scale  # Store scale for denormalization
     print(f"  R0 normalization: mean={label_norm['mean']:.4f}, std={label_norm['std']:.4f}")
 
     # Save normalization params
@@ -292,18 +266,17 @@ def main():
     patience_counter = 0
     best_state = None
 
-    history = {'train_loss': [], 'val_loss': [], 'val_r2': []}
+    history = {'train_loss': [], 'val_loss': []}
 
     for epoch in range(num_epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss, val_r2, val_corr, _, _ = evaluate(model, val_loader, criterion, device)
+        val_loss, _, _ = evaluate(model, val_loader, criterion, device)
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
-        history['val_r2'].append(val_r2)
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f} | Val R²: {val_r2:.4f}")
+            print(f"  Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -321,27 +294,22 @@ def main():
 
     # Load best model and evaluate on test set
     model.load_state_dict(best_state)
-    test_loss_norm, _, _, test_preds_norm, test_labels_norm = evaluate(
+    _, test_preds_norm, test_labels_norm = evaluate(
         model, test_loader, criterion, device
     )
 
-    # Denormalize predictions and labels for evaluation
+    # Denormalize predictions and labels
     label_mean = label_norm['mean'].item()
     label_std = label_norm['std'].item()
     test_preds = test_preds_norm * label_std + label_mean
     test_labels = test_labels_norm * label_std + label_mean
 
-    # Compute metrics on original scale
-    test_mse = np.mean((test_preds - test_labels) ** 2)
-    test_r2 = r2_score(test_labels, test_preds)
-    test_corr = np.corrcoef(test_labels, test_preds)[0, 1]
+    # If log scale was used, convert back to original scale
+    if label_scale == 'log':
+        test_preds = np.exp(test_preds)
+        test_labels = np.exp(test_labels)
 
-    print(f"\nTest Results (denormalized):")
-    print(f"  MSE: {test_mse:.4f}")
-    print(f"  R²:  {test_r2:.4f}")
-    print(f"  r:   {test_corr:.4f}")
-
-    # Save results
+    # Save results (metrics can be recomputed from test_predictions.csv)
     torch.save(best_state, output_dir / 'best_model.pt')
 
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
@@ -351,25 +319,6 @@ def main():
         'pred_R0': test_preds
     })
     results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
-
-    summary = {
-        'best_epoch': best_epoch + 1,
-        'best_val_loss': float(best_val_loss),
-        'test_mse': float(test_mse),
-        'test_r2': float(test_r2),
-        'test_corr': float(test_corr),
-        'label_norm_mean': label_mean,
-        'label_norm_std': label_std,
-        'num_train': len(train_graphs),
-        'num_val': len(val_graphs),
-        'num_test': len(test_graphs),
-        'num_parameters': count_parameters(model),
-    }
-    with open(output_dir / 'summary.json', 'w') as f:
-        json.dump(summary, f, indent=2)
-
-    # Generate plots
-    plot_results(history, test_preds, test_labels, output_dir, best_epoch)
 
     print(f"\nResults saved to: {output_dir}")
     print("Done!")

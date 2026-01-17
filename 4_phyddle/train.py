@@ -232,14 +232,11 @@ def main():
 
     # Evaluate on test set
     model.load_state_dict(torch.load(os.path.join(args['output_dir'], 'best_model.pt')))
-    test_loss, test_preds_norm, test_labels_norm_eval = evaluate(model, test_loader, criterion, device)
+    _, test_preds_norm, test_labels_norm_eval = evaluate(model, test_loader, criterion, device)
 
     # Denormalize predictions
     test_preds = test_preds_norm * label_std + label_mean
     test_labels_denorm = test_labels_norm_eval * label_std + label_mean
-
-    test_mse_orig = np.mean((test_preds - test_labels_denorm) ** 2)
-    print(f"Test MSE: {test_mse_orig:.4f}")
 
     # Save results
     pd.DataFrame(history).to_csv(os.path.join(args['output_dir'], 'training_history.csv'), index=False)

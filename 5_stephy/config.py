@@ -56,6 +56,7 @@ TRAIN_ARGS = {
 # Data processing parameters
 DATA_ARGS = {
     'dtw_num_points': 200,  # KDE grid resolution for DTW curves (adjust based on tips per location)
+    'label_scale': 'log',  # Label scale: 'linear' or 'log'
 }
 
 # Labels to predict
