@@ -40,14 +40,6 @@ echo ""
 # Create output folder
 mkdir -p "$OUT_FOLDER"
 
-# Arrays to store results for summary table
-declare -a DATASET_NAMES
-declare -a R2_VALUES
-declare -a R_VALUES
-declare -a MSE_VALUES
-declare -a BEST_EPOCHS
-DATASET_IDX=0
-
 # Process each input folder
 for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     echo ""
@@ -101,27 +93,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
         --input_dir "$INPUT_FOLDER" \
         --output_dir "$WORK_DIR"
 
-    echo ""
     echo "Training complete."
-    echo ""
-
-    # Extract results for summary table
-    DATASET_NAMES[$DATASET_IDX]="$DATASET_NAME"
-
-    # Parse summary.json for metrics
-    METRICS=$(python3 -c "
-import json
-with open('$WORK_DIR/summary.json') as f:
-    s = json.load(f)
-print(f\"{s['test_r2']:.4f},{s['test_corr']:.4f},{s['test_mse']:.4f},{s['best_epoch']}\")
-" 2>/dev/null || echo "N/A,N/A,N/A,N/A")
-
-    R2_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f1)
-    R_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f2)
-    MSE_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f3)
-    BEST_EPOCHS[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f4)
-
-    DATASET_IDX=$((DATASET_IDX + 1))
 
     echo "=============================================="
     echo "Completed: $DATASET_NAME"
@@ -135,28 +107,3 @@ echo "=============================================="
 echo "All datasets processed!"
 echo "=============================================="
 echo "Output folder: $OUT_FOLDER"
-echo ""
-
-# Print summary table
-echo "Results Summary:"
-echo "--------------------------------------------------------------------------------"
-printf "%-25s | %8s | %8s | %10s | %10s\n" "Dataset" "R²" "r" "MSE" "Best Epoch"
-echo "--------------------------------------------------------------------------------"
-for i in "${!DATASET_NAMES[@]}"; do
-    printf "%-25s | %8s | %8s | %10s | %10s\n" \
-        "${DATASET_NAMES[$i]}" \
-        "${R2_VALUES[$i]}" \
-        "${R_VALUES[$i]}" \
-        "${MSE_VALUES[$i]}" \
-        "${BEST_EPOCHS[$i]}"
-done
-echo "--------------------------------------------------------------------------------"
-
-# Save summary to CSV
-SUMMARY_CSV="$OUT_FOLDER/summary_all.csv"
-echo "Dataset,R2,r,MSE,Best_Epoch" > "$SUMMARY_CSV"
-for i in "${!DATASET_NAMES[@]}"; do
-    echo "${DATASET_NAMES[$i]},${R2_VALUES[$i]},${R_VALUES[$i]},${MSE_VALUES[$i]},${BEST_EPOCHS[$i]}" >> "$SUMMARY_CSV"
-done
-echo ""
-echo "Summary saved to: $SUMMARY_CSV"

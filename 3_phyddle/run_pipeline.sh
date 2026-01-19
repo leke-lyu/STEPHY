@@ -40,14 +40,6 @@ echo ""
 # Create output folder if it doesn't exist
 mkdir -p "$OUT_FOLDER"
 
-# Arrays to store results for summary table
-declare -a DATASET_NAMES
-declare -a R2_VALUES
-declare -a R_VALUES
-declare -a MSE_VALUES
-declare -a BEST_EPOCHS
-DATASET_IDX=0
-
 # Process each input folder
 for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     echo ""
@@ -210,45 +202,6 @@ EOF
     python3 -m phyddle -c config.py -s FTE
 
     echo "Phyddle complete."
-    echo ""
-
-    # Extract results for summary table
-    DATASET_NAMES[$DATASET_IDX]="$DATASET_NAME"
-
-    # Parse training history for best epoch
-    BEST_EPOCH=$(python3 -c "
-import pandas as pd
-import numpy as np
-df = pd.read_csv('./train_output/r0_est.train_history.csv')
-val_loss = df[(df['dataset'] == 'validation') & (df['metric'] == 'mse_value')]
-best_idx = np.argmin(val_loss['value'].values)
-print(int(val_loss['epoch'].values[best_idx]) + 1)
-" 2>/dev/null || echo "N/A")
-    BEST_EPOCHS[$DATASET_IDX]="$BEST_EPOCH"
-
-    # Parse test predictions for R², r, MSE
-    METRICS=$(python3 -c "
-import pandas as pd
-import numpy as np
-from sklearn.metrics import r2_score
-test_true_df = pd.read_csv('./estimate_output/r0_est.test_true.labels_num.csv')
-test_est_df = pd.read_csv('./estimate_output/r0_est.test_est.labels_num.csv')
-all_true, all_pred = [], []
-for i in range(16):
-    all_true.extend(np.exp(test_true_df[f'log_R0_{i}'].values))
-    all_pred.extend(np.exp(test_est_df[f'log_R0_{i}_value'].values))
-all_true, all_pred = np.array(all_true), np.array(all_pred)
-r2 = r2_score(all_true, all_pred)
-r = np.corrcoef(all_true, all_pred)[0, 1]
-mse = np.mean((all_true - all_pred) ** 2)
-print(f'{r2:.4f},{r:.4f},{mse:.4f}')
-" 2>/dev/null || echo "N/A,N/A,N/A")
-
-    R2_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f1)
-    R_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f2)
-    MSE_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f3)
-
-    DATASET_IDX=$((DATASET_IDX + 1))
 
     # Return to original directory
     cd - > /dev/null
@@ -265,19 +218,3 @@ echo "=============================================="
 echo "All datasets processed!"
 echo "=============================================="
 echo "Output folder: $OUT_FOLDER"
-echo ""
-
-# Print summary table
-echo "Results Summary:"
-echo "--------------------------------------------------------------------------------"
-printf "%-25s | %8s | %8s | %8s | %10s\n" "Dataset" "R²" "r" "MSE" "Best Epoch"
-echo "--------------------------------------------------------------------------------"
-for i in "${!DATASET_NAMES[@]}"; do
-    printf "%-25s | %8s | %8s | %8s | %10s\n" \
-        "${DATASET_NAMES[$i]}" \
-        "${R2_VALUES[$i]}" \
-        "${R_VALUES[$i]}" \
-        "${MSE_VALUES[$i]}" \
-        "${BEST_EPOCHS[$i]}"
-done
-echo "--------------------------------------------------------------------------------"

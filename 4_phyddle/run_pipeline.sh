@@ -40,14 +40,6 @@ echo ""
 # Create output folder if it doesn't exist
 mkdir -p "$OUT_FOLDER"
 
-# Arrays to store results for summary table
-declare -a DATASET_NAMES
-declare -a R2_VALUES
-declare -a R_VALUES
-declare -a MSE_VALUES
-declare -a BEST_EPOCHS
-DATASET_IDX=0
-
 # Process each input folder
 for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
     echo ""
@@ -190,7 +182,7 @@ args = {
     # Data
     'tree_width'         : $MAX_TAXA,
     'num_params'         : 16,
-    'prop_val'           : 0.1,
+    'prop_val'           : 0.25,
 
     # Training
     'num_epochs'         : 300,
@@ -237,42 +229,6 @@ EOF
     PYTHONPATH="$WORK_DIR:$SCRIPT_DIR:$PYTHONPATH" python3 "$SCRIPT_DIR/train.py"
 
     echo "Training complete."
-    echo ""
-
-    # Extract results for summary table
-    DATASET_NAMES[$DATASET_IDX]="$DATASET_NAME"
-
-    # Parse training history for best epoch
-    BEST_EPOCH=$(python3 -c "
-import pandas as pd
-import numpy as np
-df = pd.read_csv('./output/training_history.csv')
-best_idx = np.argmin(df['val_loss'].values)
-print(int(df['epoch'].values[best_idx]) + 1)
-" 2>/dev/null || echo "N/A")
-    BEST_EPOCHS[$DATASET_IDX]="$BEST_EPOCH"
-
-    # Parse test predictions for R², r, MSE
-    METRICS=$(python3 -c "
-import pandas as pd
-import numpy as np
-from sklearn.metrics import r2_score
-df = pd.read_csv('./output/test_predictions.csv')
-true_cols = sorted([c for c in df.columns if c.endswith('_true')])
-pred_cols = sorted([c for c in df.columns if c.endswith('_pred')])
-all_true = np.concatenate([np.exp(df[c].values) for c in true_cols])
-all_pred = np.concatenate([np.exp(df[c].values) for c in pred_cols])
-r2 = r2_score(all_true, all_pred)
-r = np.corrcoef(all_true, all_pred)[0, 1]
-mse = np.mean((all_true - all_pred) ** 2)
-print(f'{r2:.4f},{r:.4f},{mse:.4f}')
-" 2>/dev/null || echo "N/A,N/A,N/A")
-
-    R2_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f1)
-    R_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f2)
-    MSE_VALUES[$DATASET_IDX]=$(echo "$METRICS" | cut -d',' -f3)
-
-    DATASET_IDX=$((DATASET_IDX + 1))
 
     # Return to original directory
     cd - > /dev/null
@@ -289,19 +245,3 @@ echo "=============================================="
 echo "All datasets processed!"
 echo "=============================================="
 echo "Output folder: $OUT_FOLDER"
-echo ""
-
-# Print summary table
-echo "Results Summary:"
-echo "--------------------------------------------------------------------------------"
-printf "%-25s | %8s | %8s | %8s | %10s\n" "Dataset" "R²" "r" "MSE" "Best Epoch"
-echo "--------------------------------------------------------------------------------"
-for i in "${!DATASET_NAMES[@]}"; do
-    printf "%-25s | %8s | %8s | %8s | %10s\n" \
-        "${DATASET_NAMES[$i]}" \
-        "${R2_VALUES[$i]}" \
-        "${R_VALUES[$i]}" \
-        "${MSE_VALUES[$i]}" \
-        "${BEST_EPOCHS[$i]}"
-done
-echo "--------------------------------------------------------------------------------"
