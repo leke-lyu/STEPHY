@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration for CBLV-GAT training.
+Configuration for CBLV-GAT training (Base Model).
 
 Dataset parameters (subtree_width, num_locations) must be provided via CLI:
   python3 train.py --num_locations ... --subtree_width ... --input_dir ... --output_dir ...
@@ -10,7 +10,7 @@ Dataset parameters (subtree_width, num_locations) must be provided via CLI:
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
-    # CNN encoder branches (scaled down from SimplifiedPhyloNet)
+    # CNN encoder branches
     # Output: 64 + 32 + 32 = 128 per node
     'phy_channel_plain': [16, 32, 64],   # 3 layers, ends at 64
     'phy_channel_stride': [16, 32],       # 2 layers, ends at 32
@@ -27,17 +27,7 @@ MODEL_ARGS = {
     'edge_dim': 3,      # DTW features: distance, lag_mean, lag_std
     'attn_dim': 16,     # Attention hidden dimension
 
-    # Auxiliary branch for per-subtree statistics (15 features)
-    # ALL use unified ln(x + 1) transformation (natural log) for consistent scale
-    #   SIZE (2):     ln_subtree_length, ln_num_taxa
-    #   BRANCH (4):   ln_brlen_mean, ln_brlen_max, ln_brlen_min, ln_brlen_var
-    #   TEMPORAL (5): ln_subtree_root_age, ln_age_mean, ln_age_var, ln_stem_length, ln_depth_range
-    #   TOPOLOGY (4): ln_treeness, ln_colless, ln_N_bar, ln_mono_groups
-    'aux_dim': 15,
-    'aux_channel': [64, 32],         # Dense layer sizes -> output 32-dim
-
-    # Classifier: 320 -> 128 -> 64 -> 32 -> 1
-    # Input is 320-dim: (128 CBLV + 32 aux) * 2 (self + neighbor_agg)
+    # Classifier: 256 -> 128 -> 64 -> 32 -> 1
     'lbl_channel': [128, 64, 32],
 
     # Activation
@@ -65,12 +55,12 @@ TRAIN_ARGS = {
 
 # Data processing parameters
 DATA_ARGS = {
-    'dtw_num_points': 200,  # KDE grid resolution for DTW curves (adjust based on tips per location)
-    'label_scale': 'log',  # Label scale: 'linear' or 'log'
+    'dtw_num_points': 200,  # KDE grid resolution for DTW curves
+    'label_scale': 'log',   # Label scale: 'linear' or 'log'
 }
 
 # Labels to predict
-LABELS = ['R0']  # Can add 'Source_Sink_Score' for multi-task
+LABELS = ['R0']
 
 
 def get_config():

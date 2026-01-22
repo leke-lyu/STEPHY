@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-CBLV-GAT Model for Location-Specific R0 Estimation.
+CBLV-GAT Model with Epidemiological Features for R0 + Source/Sink Estimation (7_stephy).
+
+Changes from 5_stephy:
+- CBLV encoder: 128-dim -> 96-dim (0.75x scaling)
+- Auxiliary branch -> Epi branch: 4 -> 64 -> 32
+- Combined embedding: 160-dim -> 128-dim
+- Dual output: R0 + Source_Sink_Score
 
 Combines:
 - CNN encoder (3-branch: plain/stride/dilate) for CBLV subtree features
+- Epi branch for epidemiological features
 - GAT layer for spatial message passing using DTW edge features
 """
 
@@ -24,7 +31,7 @@ class CBLVConvEncoder(nn.Module):
     - Dilate: Long-range dependencies with dilated convolutions
 
     Input: (batch, 4, subtree_width) - CBLV features per node
-    Output: (batch, 128) - Node embedding
+    Output: (batch, 96) - Node embedding (was 128 in 5_stephy)
     """
 
     def __init__(self, args):
@@ -46,7 +53,7 @@ class CBLVConvEncoder(nn.Module):
         act_name = args['activation_func']
         self.act_fn = {'relu': F.relu, 'leaky_relu': F.leaky_relu, 'elu': F.elu}.get(act_name, F.relu)
 
-        # Plain branch: [16, 32, 64], kernels [3, 5, 7]
+        # Plain branch: [12, 24, 48], kernels [3, 5, 7]
         self.plain_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel in zip(self.phy_channel_plain, self.phy_kernel_plain):
@@ -54,7 +61,7 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.plain_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Stride branch: [16, 32], kernels [7, 9], strides [3, 6]
+        # Stride branch: [12, 24], kernels [7, 9], strides [3, 6]
         self.stride_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel, stride in zip(self.phy_channel_stride,
@@ -64,7 +71,7 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.stride_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Dilate branch: [16, 32], kernels [3, 5], dilations [3, 5]
+        # Dilate branch: [12, 24], kernels [3, 5], dilations [3, 5]
         self.dilate_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel, dilation in zip(self.phy_channel_dilate,
@@ -75,7 +82,7 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.dilate_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Output dimension: 64 + 32 + 32 = 128
+        # Output dimension: 48 + 24 + 24 = 96
         self.output_dim = (self.phy_channel_plain[-1] +
                           self.phy_channel_stride[-1] +
                           self.phy_channel_dilate[-1])
@@ -98,7 +105,7 @@ class CBLVConvEncoder(nn.Module):
             x: (batch, 4, subtree_width) CBLV features
 
         Returns:
-            (batch, 128) node embeddings
+            (batch, 96) node embeddings
         """
         # Plain branch
         x_plain = x
@@ -118,7 +125,7 @@ class CBLVConvEncoder(nn.Module):
             x_dilate = self.act_fn(conv(x_dilate))
         x_dilate = self.dilate_pool(x_dilate).squeeze(-1)
 
-        # Concatenate: 64 + 32 + 32 = 128
+        # Concatenate: 48 + 24 + 24 = 96
         return torch.cat([x_plain, x_stride, x_dilate], dim=1)
 
 
@@ -186,34 +193,39 @@ class GraphEdgeAttention(nn.Module):
             return out
 
 
-class AuxiliaryBranch(nn.Module):
+class EpiBranch(nn.Module):
     """
-    Dense network for processing per-subtree auxiliary statistics.
+    Dense network for processing epidemiological features.
 
-    Transforms 15-dimensional auxiliary features to a compact embedding
+    Transforms 4-dimensional epi features to a compact embedding
     that is concatenated with CBLV embeddings before GAT.
 
-    Input: (batch, aux_dim) - 15 auxiliary features per node
-    Output: (batch, aux_channels[-1]) - Typically 32-dim embedding
+    Input: (batch, 4) - Epi features per node
+        - Initial_Population
+        - Epidemic_Peak
+        - Peak_Timing
+        - Accumulated_Infections
+
+    Output: (batch, 32) - Epi embedding
     """
 
-    def __init__(self, aux_dim=15, aux_channels=None):
-        super(AuxiliaryBranch, self).__init__()
+    def __init__(self, epi_dim=4, epi_channels=None):
+        super(EpiBranch, self).__init__()
 
-        if aux_channels is None:
-            aux_channels = [64, 32]
+        if epi_channels is None:
+            epi_channels = [64, 32]
 
-        self.aux_dim = aux_dim
-        self.aux_channels = list(aux_channels)
+        self.epi_dim = epi_dim
+        self.epi_channels = list(epi_channels)
 
-        # Build dense layers: aux_dim -> 64 -> 32
+        # Build dense layers: 4 -> 64 -> 32
         self.layers = nn.ModuleList()
-        in_features = aux_dim
-        for out_features in self.aux_channels:
+        in_features = epi_dim
+        for out_features in self.epi_channels:
             self.layers.append(nn.Linear(in_features, out_features))
             in_features = out_features
 
-        self.output_dim = self.aux_channels[-1]
+        self.output_dim = self.epi_channels[-1]
 
         self._init_weights()
 
@@ -230,10 +242,10 @@ class AuxiliaryBranch(nn.Module):
         Forward pass.
 
         Args:
-            x: (batch, aux_dim) auxiliary features
+            x: (batch, 4) epidemiological features (log-transformed, normalized)
 
         Returns:
-            (batch, aux_channels[-1]) auxiliary embedding
+            (batch, 32) epi embedding
         """
         for layer in self.layers:
             x = F.relu(layer(x))
@@ -242,14 +254,14 @@ class AuxiliaryBranch(nn.Module):
 
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT: CNN encoder + Auxiliary branch + GAT for R0 estimation.
+    CBLV-GAT: CNN encoder + Epi branch + GAT for R0 + Source/Sink estimation.
 
     Architecture:
-    1. CNN encoder processes each node's CBLV independently -> 128-dim
-    2. Auxiliary branch processes per-subtree statistics -> 32-dim
-    3. Concat CBLV + Aux embeddings -> 160-dim
-    4. GAT aggregates spatial information using DTW edges -> 320-dim
-    5. Classifier predicts R0 per node
+    1. CNN encoder processes each node's CBLV independently -> 96-dim
+    2. Epi branch processes epidemiological features -> 32-dim
+    3. Concat CBLV + Epi embeddings -> 128-dim
+    4. GAT aggregates spatial information using DTW edges -> 256-dim
+    5. Classifier predicts R0 and Source_Sink_Score per node
     """
 
     def __init__(self, args):
@@ -259,33 +271,38 @@ class CBLV_GAT(nn.Module):
 
         # CNN encoder for CBLV features
         self.cnn_encoder = CBLVConvEncoder(args)
-        cnn_output_dim = self.cnn_encoder.output_dim  # 128
+        cnn_output_dim = self.cnn_encoder.output_dim  # 96
 
-        # Auxiliary branch for per-subtree statistics
-        aux_dim = args.get('aux_dim', 15)
-        aux_channels = args.get('aux_channel', [64, 32])
-        self.aux_branch = AuxiliaryBranch(aux_dim, aux_channels)
-        aux_output_dim = self.aux_branch.output_dim  # 32
+        # Epi branch for epidemiological features
+        epi_dim = args.get('epi_dim', 4)
+        epi_channels = args.get('epi_channel', [64, 32])
+        self.epi_branch = EpiBranch(epi_dim, epi_channels)
+        epi_output_dim = self.epi_branch.output_dim  # 32
 
-        # Node embedding dimension after concatenation (128 + 32 = 160)
-        node_embed_dim = cnn_output_dim + aux_output_dim
+        # Node embedding dimension after concatenation (96 + 32 = 128)
+        node_embed_dim = cnn_output_dim + epi_output_dim
 
         # Graph attention layer for spatial aggregation
         edge_dim = args['edge_dim']
         attn_dim = args['attn_dim']
         self.graph_attention = GraphEdgeAttention(node_embed_dim, edge_dim, attn_dim)
 
-        # Classifier: 320 -> 128 -> 64 -> 32 -> 1
-        # GAT output: concat(self_160, neighbor_agg_160) = 320
-        gat_output_dim = node_embed_dim * 2  # 320 (concat self + agg)
+        # GAT output: concat(self_128, neighbor_agg_128) = 256
+        gat_output_dim = node_embed_dim * 2  # 256
         self.lbl_channel = list(args['lbl_channel'])
 
-        self.classifier = nn.ModuleList()
+        # Shared classifier backbone: 256 -> 128 -> 64 -> 32
+        self.classifier_backbone = nn.ModuleList()
         in_features = gat_output_dim
         for out_features in self.lbl_channel:
-            self.classifier.append(nn.Linear(in_features, out_features))
+            self.classifier_backbone.append(nn.Linear(in_features, out_features))
             in_features = out_features
-        self.classifier.append(nn.Linear(in_features, 1))
+
+        # Separate output heads for each label
+        # R0 head: 32 -> 1
+        self.r0_head = nn.Linear(in_features, 1)
+        # Source_Sink_Score head: 32 -> 1
+        self.sss_head = nn.Linear(in_features, 1)
 
         # Activation
         act_name = args['activation_func']
@@ -294,43 +311,52 @@ class CBLV_GAT(nn.Module):
         self._init_classifier_weights()
 
     def _init_classifier_weights(self):
-        for m in self.classifier:
+        for m in self.classifier_backbone:
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+        # Initialize output heads
+        for head in [self.r0_head, self.sss_head]:
+            nn.init.kaiming_uniform_(head.weight, mode='fan_in', nonlinearity='relu')
+            if head.bias is not None:
+                nn.init.constant_(head.bias, 0)
 
     def forward(self, g, node_cblv, edge_feat):
         """
         Forward pass.
 
         Args:
-            g: DGL graph with N nodes (must have g.ndata['aux'] of shape (N, 15))
+            g: DGL graph with N nodes (must have g.ndata['epi'] of shape (N, 4))
             node_cblv: (N, 4, subtree_width) CBLV features per node
             edge_feat: (E, 3) DTW edge features
 
         Returns:
-            (N,) R0 predictions per node
+            r0_pred: (N,) R0 predictions per node
+            sss_pred: (N,) Source_Sink_Score predictions per node
         """
         # CNN encode each node's CBLV
-        h_cblv = self.cnn_encoder(node_cblv)  # (N, 128)
+        h_cblv = self.cnn_encoder(node_cblv)  # (N, 96)
 
-        # Process auxiliary features
-        aux = g.ndata['aux']  # (N, 15)
-        h_aux = self.aux_branch(aux)  # (N, 32)
+        # Process epi features
+        epi = g.ndata['epi']  # (N, 4)
+        h_epi = self.epi_branch(epi)  # (N, 32)
 
-        # Concat CBLV and aux embeddings BEFORE GAT
-        h = torch.cat([h_cblv, h_aux], dim=1)  # (N, 160)
+        # Concat CBLV and epi embeddings BEFORE GAT
+        h = torch.cat([h_cblv, h_epi], dim=1)  # (N, 128)
 
         # Graph attention message passing
-        h = self.graph_attention(g, h, edge_feat)  # (N, 320)
+        h = self.graph_attention(g, h, edge_feat)  # (N, 256)
 
-        # Classifier
-        for layer in self.classifier[:-1]:
+        # Shared classifier backbone
+        for layer in self.classifier_backbone:
             h = self.act_fn(layer(h))
-        out = self.classifier[-1](h).squeeze(-1)  # (N,)
 
-        return out
+        # Separate output heads
+        r0_pred = self.r0_head(h).squeeze(-1)   # (N,)
+        sss_pred = self.sss_head(h).squeeze(-1)  # (N,)
+
+        return r0_pred, sss_pred
 
 
 def count_parameters(model):

@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for CBLV-GAT.
+Data Loading and Preprocessing for CBLV-GAT with Epidemiological Features (7_stephy).
+
+Changes from 5_stephy:
+- Loads epi features from *_nd.csv instead of computing auxiliary stats from tree
+- Epi features: Initial_Population, Epidemic_Peak, Peak_Timing, Accumulated_Infections
+- Labels: R0 + Source_Sink_Score (dual output)
 
 Includes:
 - CBLV encoding via virtual subtree traversal
 - DTW edge feature extraction
+- Epi feature loading from preprocessed CSV
 - DGL graph construction
-- Label extraction (R0)
 """
 
 import sys
 import re
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
@@ -21,14 +27,6 @@ import dgl
 import dendropy as dp
 from scipy.stats import gaussian_kde
 from numba import jit
-
-# Add utils to path
-SCRIPT_DIR = Path(__file__).parent
-UTILS_DIR = SCRIPT_DIR.parent / 'utils'
-if str(UTILS_DIR) not in sys.path:
-    sys.path.insert(0, str(UTILS_DIR))
-
-from trajectory_utils import load_R0_and_population_from_csv
 
 from config import DATA_ARGS
 
@@ -59,263 +57,6 @@ def get_location(node):
 def is_sample(node):
     """Check if node is an actual sample (not ancestral reconstruction)."""
     return node.annotations and node.annotations.get_value('samp') == 'sample'
-
-
-# ==============================================================================
-# Per-Subtree Auxiliary Statistics (15 features per location)
-#
-# Uses VIRTUAL SUBTREE traversal - visits only branches leading to tips at the
-# target location without copying the tree. ~12x faster than subtree cloning.
-#
-# Features by category:
-#   SIZE (2):     subtree_length, num_taxa
-#   BRANCH (4):   brlen_mean, brlen_max, brlen_min, brlen_var
-#   TEMPORAL (5): subtree_root_age, age_mean, age_var, stem_length, depth_range
-#   TOPOLOGY (4): treeness, colless, N_bar, monophyletic_groups
-# ==============================================================================
-
-def count_monophyletic_groups(phy, target_loc):
-    """
-    Count independent monophyletic clades for a target location.
-
-    A monophyletic group is a maximal clade where ALL sampled leaf descendants
-    belong to the target location. High count suggests multiple introductions.
-
-    Args:
-        phy: dendropy.Tree object
-        target_loc: Target location ID
-
-    Returns:
-        Number of monophyletic groups (int)
-    """
-    # Postorder pass: mark each node as pure/mixed for target location
-    for node in phy.postorder_node_iter():
-        if node.is_leaf():
-            if is_sample(node):
-                loc = get_location(node)
-                node._mono_pure = (loc == target_loc)
-                node._mono_has_target = (loc == target_loc)
-            else:
-                # Non-sample leaf (ancestral reconstruction) - treat as neutral
-                node._mono_pure = True
-                node._mono_has_target = False
-        else:
-            children = node.child_nodes()
-            # Pure if all children are pure AND at least one has target
-            has_target = any(getattr(c, '_mono_has_target', False) for c in children)
-            all_pure = all(getattr(c, '_mono_pure', True) for c in children)
-            node._mono_pure = all_pure and has_target
-            node._mono_has_target = has_target
-
-    # Count maximal monophyletic groups
-    # A maximal group is a pure node whose parent is not pure (or is root)
-    count = 0
-    for node in phy.preorder_node_iter():
-        if getattr(node, '_mono_pure', False) and getattr(node, '_mono_has_target', False):
-            parent = node.parent_node
-            if parent is None or not getattr(parent, '_mono_pure', False):
-                count += 1
-
-    # Cleanup temporary attributes
-    for node in phy.preorder_node_iter():
-        if hasattr(node, '_mono_pure'):
-            delattr(node, '_mono_pure')
-        if hasattr(node, '_mono_has_target'):
-            delattr(node, '_mono_has_target')
-
-    return count
-
-
-def _collect_virtual_subtree_stats(node, loc, mrca, encoder, stats, branch_depth=0):
-    """
-    Recursively collect statistics via virtual traversal (no tree copying).
-
-    Args:
-        node: Current node
-        loc: Target location ID
-        mrca: MRCA node for this location
-        encoder: VirtualSubtreeEncoder with precomputed loc_counts
-        stats: Dict to accumulate statistics (modified in place):
-            - internal_lengths: branch lengths of internal nodes
-            - terminal_lengths: branch lengths of terminal nodes (leaves)
-            - branch_ages: root distances of branch points
-            - colless_terms: |n_left - n_right| at each branch point
-            - nodes_above_tips: branch depth for each tip (for N_bar)
-        branch_depth: Current depth in branch points (for N_bar)
-    """
-    if node.is_leaf():
-        if is_sample(node) and get_location(node) == loc:
-            # Terminal branch length (for treeness)
-            if node.edge.length and node.edge.length > 0:
-                stats['terminal_lengths'].append(node.edge.length)
-            # Record branch depth for this tip (for N_bar)
-            stats['nodes_above_tips'].append(branch_depth)
-        return
-
-    if node.loc_counts.get(loc, 0) == 0:
-        return
-
-    is_branch_pt = encoder._is_branch_point(node, loc)
-
-    if is_branch_pt:
-        # Record branch point age
-        stats['branch_ages'].append(node.root_distance)
-
-        # Colless: |n_left - n_right| for children with target location
-        child_counts = [c.loc_counts.get(loc, 0) for c in node.child_nodes()
-                        if c.loc_counts.get(loc, 0) > 0]
-        if len(child_counts) == 2:
-            stats['colless_terms'].append(abs(child_counts[0] - child_counts[1]))
-        elif len(child_counts) > 2:
-            # Polytomy: sum of pairwise differences
-            for i in range(len(child_counts)):
-                for j in range(i + 1, len(child_counts)):
-                    stats['colless_terms'].append(abs(child_counts[i] - child_counts[j]))
-
-    # Internal branch length (exclude MRCA's edge = stem)
-    if node != mrca and node.edge.length and node.edge.length > 0:
-        stats['internal_lengths'].append(node.edge.length)
-
-    # Recurse into children, incrementing depth at branch points
-    new_depth = branch_depth + 1 if is_branch_pt else branch_depth
-    for child in node.child_nodes():
-        if child.loc_counts.get(loc, 0) > 0:
-            _collect_virtual_subtree_stats(child, loc, mrca, encoder, stats, new_depth)
-
-
-def compute_subtree_stats(phy, target_loc, encoder):
-    """
-    Compute 15 auxiliary statistics for a location's virtual subtree.
-
-    ALL features use unified ln(x + 1) transformation (natural log):
-    - Handles 0 values gracefully (ln(0+1) = 0)
-    - Consistent scale across all features
-    - Matches R0 label transform (natural log)
-    - No special FALLBACK values needed
-
-    Returns array of shape (15,) organized by category:
-
-    SIZE (2):
-        0: ln_subtree_length   - ln(total_branch_length + 1)
-        1: ln_num_taxa         - ln(num_tips + 1)
-
-    BRANCH LENGTH (4):
-        2: ln_brlen_mean       - ln(mean_branch_length + 1)
-        3: ln_brlen_max        - ln(max_branch_length + 1)
-        4: ln_brlen_min        - ln(min_branch_length + 1)
-        5: ln_brlen_var        - ln(branch_length_variance + 1)
-
-    TEMPORAL (5):
-        6: ln_subtree_root_age - ln(mrca_depth + 1)
-        7: ln_age_mean         - ln(mean_branch_age + 1)
-        8: ln_age_var          - ln(branch_age_variance + 1)
-        9: ln_stem_length      - ln(mrca_edge_length + 1)
-       10: ln_depth_range      - ln(tip_depth_spread + 1)
-
-    TOPOLOGY (4):
-       11: ln_treeness         - ln(internal/total_ratio + 1)
-       12: ln_colless          - ln(imbalance_sum + 1)
-       13: ln_N_bar            - ln(mean_branch_points_above_tips + 1)
-       14: ln_mono_groups      - ln(monophyletic_groups + 1)
-    """
-    # Unified transformation: ln(x + 1) for all features (using np.log1p for numerical stability)
-    log1p = lambda x: np.log1p(x)
-
-    # Count tips and monophyletic groups
-    tips_at_loc = [nd for nd in phy.leaf_node_iter()
-                   if is_sample(nd) and get_location(nd) == target_loc]
-    num_taxa = len(tips_at_loc)
-    mono_groups = count_monophyletic_groups(phy, target_loc)
-
-    # Edge case: too few tips - return zeros (ln(0+1) = 0 for undefined metrics)
-    if num_taxa <= 1:
-        return np.array([
-            0.0, log1p(num_taxa),                        # SIZE
-            0.0, 0.0, 0.0, 0.0,                          # BRANCH
-            0.0, 0.0, 0.0, 0.0, 0.0,                     # TEMPORAL
-            0.0, 0.0, 0.0, log1p(mono_groups)            # TOPOLOGY
-        ], dtype=np.float32)
-
-    mrca = encoder._find_mrca(target_loc)
-    if mrca is None:
-        return np.array([
-            0.0, log1p(num_taxa),
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, log1p(mono_groups)
-        ], dtype=np.float32)
-
-    # Collect stats via virtual traversal
-    stats = {
-        'internal_lengths': [],   # for treeness (internal branches)
-        'terminal_lengths': [],   # for treeness (terminal branches)
-        'branch_ages': [],        # branch point ages
-        'colless_terms': [],      # |n_left - n_right| at each branch point
-        'nodes_above_tips': []    # branch depth for each tip (for N_bar)
-    }
-    _collect_virtual_subtree_stats(mrca, target_loc, mrca, encoder, stats, branch_depth=0)
-
-    # Combine branch lengths
-    all_lengths = stats['internal_lengths'] + stats['terminal_lengths']
-    if not all_lengths:
-        all_lengths = [1e-8]
-    branch_lengths = np.array(all_lengths)
-
-    # Branch ages
-    branch_ages = stats['branch_ages']
-    if not branch_ages:
-        branch_ages = [mrca.root_distance if mrca.root_distance > 0 else 1e-8]
-    branch_ages = np.array(branch_ages)
-
-    # Tip depths
-    tip_depths = np.array([nd.root_distance for nd in tips_at_loc])
-
-    # --- SIZE ---
-    subtree_length = branch_lengths.sum()
-
-    # --- BRANCH LENGTH ---
-    brlen_mean = branch_lengths.mean()
-    brlen_max = branch_lengths.max()
-    brlen_min = branch_lengths.min()
-    brlen_var = branch_lengths.var() if len(branch_lengths) >= 2 else 0
-
-    # --- TEMPORAL ---
-    stem = mrca.edge.length if mrca.edge.length else 0
-    depth_range = tip_depths.max() - tip_depths.min()
-
-    # --- TOPOLOGY ---
-    # Treeness: internal / total branch length
-    internal_sum = sum(stats['internal_lengths']) if stats['internal_lengths'] else 0
-    total_sum = subtree_length
-    treeness = internal_sum / total_sum if total_sum > 0 else 0
-
-    # Colless: sum of imbalance terms
-    colless = sum(stats['colless_terms']) if stats['colless_terms'] else 0
-
-    # N_bar: mean branch points above tips
-    N_bar = np.mean(stats['nodes_above_tips']) if stats['nodes_above_tips'] else 0
-
-    return np.array([
-        # SIZE (2)
-        log1p(subtree_length),         # 0: ln_subtree_length
-        log1p(num_taxa),               # 1: ln_num_taxa
-        # BRANCH LENGTH (4)
-        log1p(brlen_mean),             # 2: ln_brlen_mean
-        log1p(brlen_max),              # 3: ln_brlen_max
-        log1p(brlen_min),              # 4: ln_brlen_min
-        log1p(brlen_var),              # 5: ln_brlen_var
-        # TEMPORAL (5)
-        log1p(mrca.root_distance),     # 6: ln_subtree_root_age
-        log1p(branch_ages.mean()),     # 7: ln_age_mean
-        log1p(branch_ages.var() if len(branch_ages) >= 2 else 0),  # 8: ln_age_var
-        log1p(stem),                   # 9: ln_stem_length
-        log1p(depth_range),            # 10: ln_depth_range
-        # TOPOLOGY (4)
-        log1p(treeness),               # 11: ln_treeness
-        log1p(colless),                # 12: ln_colless
-        log1p(N_bar),                  # 13: ln_N_bar
-        log1p(mono_groups)             # 14: ln_mono_groups
-    ], dtype=np.float32)
 
 
 # ==============================================================================
@@ -584,24 +325,44 @@ def compute_dtw_edge_features(tree_file, tree_idx=0):
 
 
 # ==============================================================================
-# Label Extraction
+# Epi Feature and Label Loading
 # ==============================================================================
 
-def extract_labels(input_folder, file_prefix, num_nodes):
+def load_node_data(input_folder, file_prefix, num_nodes):
     """
-    Extract R0 labels for each node from parameter CSV.
+    Load epidemiological features and labels from preprocessed *_nd.csv file.
 
     Args:
         input_folder: Path to data folder
-        file_prefix: File prefix (e.g., '0' for '0_parameter.csv')
-        num_nodes: Number of nodes (locations)
+        file_prefix: File prefix (e.g., '0' for '0_nd.csv')
+        num_nodes: Expected number of nodes (locations)
 
     Returns:
-        np.ndarray: R0 values for each location, shape (num_nodes,)
+        epi_features: np.ndarray of shape (num_nodes, 4) - epi features
+        labels: dict with 'R0' and 'Source_Sink_Score' arrays
     """
     input_folder = Path(input_folder)
-    params = load_R0_and_population_from_csv(str(input_folder / f"{file_prefix}_parameter.csv"))
-    return np.array([params['R0'].get(i, 0.0) for i in range(num_nodes)], dtype=np.float32)
+    nd_file = input_folder / f"{file_prefix}_nd.csv"
+
+    if not nd_file.exists():
+        raise FileNotFoundError(f"Node data file not found: {nd_file}. Run preprocess.py first.")
+
+    df = pd.read_csv(nd_file)
+
+    if len(df) != num_nodes:
+        raise ValueError(f"Node data has {len(df)} rows, expected {num_nodes}")
+
+    # Extract epi features (4 features)
+    epi_cols = ['Initial_Population', 'Epidemic_Peak', 'Peak_Timing', 'Accumulated_Infections']
+    epi_features = df[epi_cols].values.astype(np.float32)
+
+    # Extract labels
+    labels = {
+        'R0': df['R0'].values.astype(np.float32),
+        'Source_Sink_Score': df['Source_Sink_Score'].values.astype(np.float32)
+    }
+
+    return epi_features, labels
 
 
 # ==============================================================================
@@ -613,7 +374,7 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     Build a single DGL graph from a tree.
 
     Returns:
-        g: DGL graph with node/edge features (including aux features)
+        g: DGL graph with node/edge features (including epi features)
         locations: List of location IDs
         tree_height: Height of the tree
     """
@@ -627,14 +388,10 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
 
     # CBLV shape: (n_nodes, subtree_width, 4) -> transpose to (n_nodes, 4, subtree_width)
     node_cblv = np.zeros((n_nodes, subtree_width, 4))
-    # Auxiliary features shape: (n_nodes, 15) - see compute_subtree_stats for feature list
-    node_aux = np.zeros((n_nodes, 15), dtype=np.float32)
 
     for i, loc in enumerate(locations):
         cblv, _, _ = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
         node_cblv[i] = cblv
-        # Compute per-subtree auxiliary statistics
-        node_aux[i] = compute_subtree_stats(phy, loc, encoder)
 
     # Transpose to (n_nodes, 4, subtree_width) for Conv1d
     node_cblv = np.transpose(node_cblv, (0, 2, 1))
@@ -644,16 +401,17 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     if locations != dtw_locs:
         raise ValueError(f"Location mismatch: CBLV={locations}, DTW={dtw_locs}")
 
-    # Labels (R0 from parameter CSV)
+    # Load epi features and labels from preprocessed CSV
     file_prefix = Path(tree_file).stem.replace('_beast2', '')
-    r0_labels = extract_labels(input_folder, file_prefix, n_nodes)
+    epi_features, labels = load_node_data(input_folder, file_prefix, n_nodes)
 
     # Construct graph
     g = dgl.graph((src, dst), num_nodes=n_nodes)
     g.ndata['cblv'] = torch.tensor(node_cblv, dtype=torch.float32)
-    g.ndata['aux'] = torch.tensor(node_aux, dtype=torch.float32)  # (n_nodes, 15) auxiliary features
+    g.ndata['epi'] = torch.tensor(epi_features, dtype=torch.float32)  # (n_nodes, 4)
     g.ndata['location'] = torch.tensor(locations, dtype=torch.long)
-    g.ndata['R0'] = torch.tensor(r0_labels, dtype=torch.float32)
+    g.ndata['R0'] = torch.tensor(labels['R0'], dtype=torch.float32)
+    g.ndata['Source_Sink_Score'] = torch.tensor(labels['Source_Sink_Score'], dtype=torch.float32)
     g.edata['feat'] = torch.tensor(edge_feats, dtype=torch.float32)
 
     return g, locations, tree_height

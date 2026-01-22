@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Training script for CBLV-GAT.
+Training script for CBLV-GAT (Base Model).
 
 Usage:
     # Step 1: Analyze dataset to get parameters
@@ -95,36 +95,6 @@ def normalize_labels(train_graphs, val_graphs, test_graphs):
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
             g.ndata['R0'] = (g.ndata['R0'] - mean) / std
-
-    return {'mean': mean, 'std': std}
-
-
-def normalize_aux_features(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize auxiliary features using training set statistics.
-
-    Args:
-        train_graphs: List of (graph, id, locs, height) tuples for training
-        val_graphs: List of (graph, id, locs, height) tuples for validation
-        test_graphs: List of (graph, id, locs, height) tuples for testing
-
-    Returns:
-        aux_norm: Dict with 'mean' and 'std' tensors (shape: 15,)
-    """
-    # Collect all aux features from training set
-    train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)  # (total_train_nodes, 15)
-
-    # Compute per-feature mean and std
-    mean = train_aux.mean(dim=0)  # (15,)
-    std = train_aux.std(dim=0)    # (15,)
-
-    # Avoid division by zero (replace zero std with 1.0)
-    std = torch.where(std < 1e-8, torch.ones_like(std), std)
-
-    # Normalize all graphs
-    for graph_list in [train_graphs, val_graphs, test_graphs]:
-        for g, *_ in graph_list:
-            g.ndata['aux'] = (g.ndata['aux'] - mean) / std
 
     return {'mean': mean, 'std': std}
 
@@ -279,10 +249,6 @@ def main():
         apply_label_transform(val_graphs, label_scale)
         apply_label_transform(test_graphs, label_scale)
 
-    # Normalize auxiliary features using training set statistics
-    aux_norm = normalize_aux_features(train_graphs, val_graphs, test_graphs)
-    print(f"  Aux normalization: mean shape={aux_norm['mean'].shape}, std shape={aux_norm['std'].shape}")
-
     # Normalize edge features using training set statistics
     edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
     print(f"  Edge normalization: mean shape={edge_norm['mean'].shape}, std shape={edge_norm['std'].shape}")
@@ -293,7 +259,6 @@ def main():
     print(f"  R0 normalization: mean={label_norm['mean']:.4f}, std={label_norm['std']:.4f}")
 
     # Save normalization params
-    torch.save(aux_norm, output_dir / 'aux_norm.pt')
     torch.save(edge_norm, output_dir / 'edge_norm.pt')
     torch.save(label_norm, output_dir / 'label_norm.pt')
 

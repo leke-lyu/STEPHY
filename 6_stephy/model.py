@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CBLV-GAT Model for Location-Specific R0 Estimation.
+CBLV-GAT Model for Location-Specific R0 Estimation (Base Model).
 
 Combines:
 - CNN encoder (3-branch: plain/stride/dilate) for CBLV subtree features
@@ -186,70 +186,14 @@ class GraphEdgeAttention(nn.Module):
             return out
 
 
-class AuxiliaryBranch(nn.Module):
-    """
-    Dense network for processing per-subtree auxiliary statistics.
-
-    Transforms 15-dimensional auxiliary features to a compact embedding
-    that is concatenated with CBLV embeddings before GAT.
-
-    Input: (batch, aux_dim) - 15 auxiliary features per node
-    Output: (batch, aux_channels[-1]) - Typically 32-dim embedding
-    """
-
-    def __init__(self, aux_dim=15, aux_channels=None):
-        super(AuxiliaryBranch, self).__init__()
-
-        if aux_channels is None:
-            aux_channels = [64, 32]
-
-        self.aux_dim = aux_dim
-        self.aux_channels = list(aux_channels)
-
-        # Build dense layers: aux_dim -> 64 -> 32
-        self.layers = nn.ModuleList()
-        in_features = aux_dim
-        for out_features in self.aux_channels:
-            self.layers.append(nn.Linear(in_features, out_features))
-            in_features = out_features
-
-        self.output_dim = self.aux_channels[-1]
-
-        self._init_weights()
-
-    def _init_weights(self):
-        """Initialize weights using Kaiming initialization."""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        """
-        Forward pass.
-
-        Args:
-            x: (batch, aux_dim) auxiliary features
-
-        Returns:
-            (batch, aux_channels[-1]) auxiliary embedding
-        """
-        for layer in self.layers:
-            x = F.relu(layer(x))
-        return x
-
-
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT: CNN encoder + Auxiliary branch + GAT for R0 estimation.
+    CBLV-GAT: CNN encoder + GAT for R0 estimation.
 
     Architecture:
     1. CNN encoder processes each node's CBLV independently -> 128-dim
-    2. Auxiliary branch processes per-subtree statistics -> 32-dim
-    3. Concat CBLV + Aux embeddings -> 160-dim
-    4. GAT aggregates spatial information using DTW edges -> 320-dim
-    5. Classifier predicts R0 per node
+    2. GAT aggregates spatial information using DTW edges -> 256-dim
+    3. Classifier predicts R0 per node
     """
 
     def __init__(self, args):
@@ -261,23 +205,13 @@ class CBLV_GAT(nn.Module):
         self.cnn_encoder = CBLVConvEncoder(args)
         cnn_output_dim = self.cnn_encoder.output_dim  # 128
 
-        # Auxiliary branch for per-subtree statistics
-        aux_dim = args.get('aux_dim', 15)
-        aux_channels = args.get('aux_channel', [64, 32])
-        self.aux_branch = AuxiliaryBranch(aux_dim, aux_channels)
-        aux_output_dim = self.aux_branch.output_dim  # 32
-
-        # Node embedding dimension after concatenation (128 + 32 = 160)
-        node_embed_dim = cnn_output_dim + aux_output_dim
-
         # Graph attention layer for spatial aggregation
         edge_dim = args['edge_dim']
         attn_dim = args['attn_dim']
-        self.graph_attention = GraphEdgeAttention(node_embed_dim, edge_dim, attn_dim)
+        self.graph_attention = GraphEdgeAttention(cnn_output_dim, edge_dim, attn_dim)
 
-        # Classifier: 320 -> 128 -> 64 -> 32 -> 1
-        # GAT output: concat(self_160, neighbor_agg_160) = 320
-        gat_output_dim = node_embed_dim * 2  # 320 (concat self + agg)
+        # Classifier: 256 -> 128 -> 64 -> 32 -> 1
+        gat_output_dim = cnn_output_dim * 2  # 256 (concat self + agg)
         self.lbl_channel = list(args['lbl_channel'])
 
         self.classifier = nn.ModuleList()
@@ -305,7 +239,7 @@ class CBLV_GAT(nn.Module):
         Forward pass.
 
         Args:
-            g: DGL graph with N nodes (must have g.ndata['aux'] of shape (N, 15))
+            g: DGL graph with N nodes
             node_cblv: (N, 4, subtree_width) CBLV features per node
             edge_feat: (E, 3) DTW edge features
 
@@ -313,17 +247,10 @@ class CBLV_GAT(nn.Module):
             (N,) R0 predictions per node
         """
         # CNN encode each node's CBLV
-        h_cblv = self.cnn_encoder(node_cblv)  # (N, 128)
-
-        # Process auxiliary features
-        aux = g.ndata['aux']  # (N, 15)
-        h_aux = self.aux_branch(aux)  # (N, 32)
-
-        # Concat CBLV and aux embeddings BEFORE GAT
-        h = torch.cat([h_cblv, h_aux], dim=1)  # (N, 160)
+        h = self.cnn_encoder(node_cblv)  # (N, 128)
 
         # Graph attention message passing
-        h = self.graph_attention(g, h, edge_feat)  # (N, 320)
+        h = self.graph_attention(g, h, edge_feat)  # (N, 256)
 
         # Classifier
         for layer in self.classifier[:-1]:

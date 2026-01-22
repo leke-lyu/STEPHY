@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Batch training pipeline for STEPHY (CBLV-GAT) R0 estimation
+# Batch training pipeline for STEPHY (CBLV-GAT) R0 estimation - Base Model
 #
 # Usage:
 #   bash run_pipeline.sh inputfolder_0 inputfolder_1 ... outfolder
@@ -33,7 +33,7 @@ OUT_FOLDER="${ARGS[$NUM_ARGS-1]}"
 INPUT_FOLDERS=("${ARGS[@]:0:$NUM_ARGS-1}")
 
 echo "=============================================="
-echo "STEPHY (CBLV-GAT) R0 Estimation Pipeline"
+echo "STEPHY (CBLV-GAT) R0 Estimation - Base Model"
 echo "=============================================="
 echo "Script directory: $SCRIPT_DIR"
 echo "Output folder: $OUT_FOLDER"
