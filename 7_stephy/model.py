@@ -254,14 +254,17 @@ class EpiBranch(nn.Module):
 
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT: CNN encoder + Epi branch + GAT for R0 + Source/Sink estimation.
+    CBLV-GAT: CNN encoder + Epi branch + GAT for single-task prediction.
 
     Architecture:
     1. CNN encoder processes each node's CBLV independently -> 96-dim
     2. Epi branch processes epidemiological features -> 32-dim
     3. Concat CBLV + Epi embeddings -> 128-dim
     4. GAT aggregates spatial information using DTW edges -> 256-dim
-    5. Classifier predicts R0 and Source_Sink_Score per node
+    5. Classifier predicts target label per node
+
+    Args:
+        args: Config dict with model parameters
     """
 
     def __init__(self, args):
@@ -291,18 +294,13 @@ class CBLV_GAT(nn.Module):
         gat_output_dim = node_embed_dim * 2  # 256
         self.lbl_channel = list(args['lbl_channel'])
 
-        # Shared classifier backbone: 256 -> 128 -> 64 -> 32
-        self.classifier_backbone = nn.ModuleList()
+        # Classifier: 256 -> 128 -> 64 -> 32 -> 1
+        self.classifier = nn.ModuleList()
         in_features = gat_output_dim
         for out_features in self.lbl_channel:
-            self.classifier_backbone.append(nn.Linear(in_features, out_features))
+            self.classifier.append(nn.Linear(in_features, out_features))
             in_features = out_features
-
-        # Separate output heads for each label
-        # R0 head: 32 -> 1
-        self.r0_head = nn.Linear(in_features, 1)
-        # Source_Sink_Score head: 32 -> 1
-        self.sss_head = nn.Linear(in_features, 1)
+        self.classifier.append(nn.Linear(in_features, 1))
 
         # Activation
         act_name = args['activation_func']
@@ -311,16 +309,11 @@ class CBLV_GAT(nn.Module):
         self._init_classifier_weights()
 
     def _init_classifier_weights(self):
-        for m in self.classifier_backbone:
+        for m in self.classifier:
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-        # Initialize output heads
-        for head in [self.r0_head, self.sss_head]:
-            nn.init.kaiming_uniform_(head.weight, mode='fan_in', nonlinearity='relu')
-            if head.bias is not None:
-                nn.init.constant_(head.bias, 0)
 
     def forward(self, g, node_cblv, edge_feat):
         """
@@ -332,8 +325,7 @@ class CBLV_GAT(nn.Module):
             edge_feat: (E, 3) DTW edge features
 
         Returns:
-            r0_pred: (N,) R0 predictions per node
-            sss_pred: (N,) Source_Sink_Score predictions per node
+            (N,) predictions per node
         """
         # CNN encode each node's CBLV
         h_cblv = self.cnn_encoder(node_cblv)  # (N, 96)
@@ -348,15 +340,12 @@ class CBLV_GAT(nn.Module):
         # Graph attention message passing
         h = self.graph_attention(g, h, edge_feat)  # (N, 256)
 
-        # Shared classifier backbone
-        for layer in self.classifier_backbone:
+        # Classifier
+        for layer in self.classifier[:-1]:
             h = self.act_fn(layer(h))
+        out = self.classifier[-1](h).squeeze(-1)  # (N,)
 
-        # Separate output heads
-        r0_pred = self.r0_head(h).squeeze(-1)   # (N,)
-        sss_pred = self.sss_head(h).squeeze(-1)  # (N,)
-
-        return r0_pred, sss_pred
+        return out
 
 
 def count_parameters(model):

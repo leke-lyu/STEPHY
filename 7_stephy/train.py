@@ -2,21 +2,19 @@
 """
 Training script for CBLV-GAT with Epidemiological Features (7_stephy).
 
-Changes from 5_stephy:
-- Epi features: log(x) transform before Z-score normalization
-- Dual output: R0 + Source_Sink_Score
-- Separate loss weighting for each label
+Single-task prediction: either R0 or Source_Sink_Score (controlled by config.py).
 
 Usage:
-    # Step 1: Preprocess dataset to generate *_nd.csv files
-    python3 preprocess.py /path/to/data
-
-    # Step 2: Analyze dataset to get parameters
+    # Step 1: Analyze dataset to get parameters
     python3 analyze_trees.py /path/to/data
 
-    # Step 3: Train with required parameters
+    # Step 2: Train with required parameters
     python3 train.py --num_locations ... --subtree_width ... \\
                      --input_dir /path/to/data --output_dir ./results
+
+Requirements:
+    - *_beast2.trees files (phylogenetic trees)
+    - *_nf.csv files (node features + labels)
 """
 
 import argparse
@@ -28,6 +26,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
 from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
@@ -44,17 +43,8 @@ def parse_args():
                         help='Number of locations (from analyze_trees.py)')
     parser.add_argument('--subtree_width', type=int, required=True,
                         help='Max tips per location (from analyze_trees.py)')
-    # Optional overrides
-    parser.add_argument('--epochs', type=int, default=None, help='Override num_epochs')
-    parser.add_argument('--lr', type=float, default=None, help='Override learning_rate')
-    parser.add_argument('--seed', type=int, default=None, help='Override random_seed')
+    # Runtime options
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
-    parser.add_argument('--label_scale', choices=['linear', 'log'], default=None,
-                        help='Override R0 label scale (linear or log)')
-    parser.add_argument('--r0_weight', type=float, default=1.0,
-                        help='Weight for R0 loss (default: 1.0)')
-    parser.add_argument('--sss_weight', type=float, default=1.0,
-                        help='Weight for Source_Sink_Score loss (default: 1.0)')
     return parser.parse_args()
 
 
@@ -72,53 +62,29 @@ def apply_epi_log_transform(graphs):
 
     Epi features (Initial_Population, Epidemic_Peak, Peak_Timing, Accumulated_Infections)
     are all positive, so we use log(x) directly (no +1 needed).
-
-    Args:
-        graphs: List of (graph, id, locs, height) tuples
     """
     for g, *_ in graphs:
         epi = g.ndata['epi']
-        # Clamp to avoid log(0) - shouldn't happen but safety first
         epi = torch.clamp(epi, min=1e-8)
         g.ndata['epi'] = torch.log(epi)
 
 
-def apply_r0_log_transform(graphs):
-    """
-    Apply log transform to R0 labels.
-
-    Args:
-        graphs: List of (graph, id, locs, height) tuples
-    """
+def apply_label_log_transform(graphs, label_name):
+    """Apply log transform to labels."""
     for g, *_ in graphs:
-        r0 = g.ndata['R0']
-        r0 = torch.clamp(r0, min=1e-8)
-        g.ndata['R0'] = torch.log(r0)
+        labels = g.ndata[label_name]
+        labels = torch.clamp(labels, min=1e-8)
+        g.ndata[label_name] = torch.log(labels)
 
 
 def normalize_epi_features(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize epi features using training set statistics.
+    """Z-score normalize epi features using training set statistics."""
+    train_epi = torch.cat([g.ndata['epi'] for g, *_ in train_graphs], dim=0)
 
-    Args:
-        train_graphs: List of (graph, id, locs, height) tuples for training
-        val_graphs: List of (graph, id, locs, height) tuples for validation
-        test_graphs: List of (graph, id, locs, height) tuples for testing
-
-    Returns:
-        epi_norm: Dict with 'mean' and 'std' tensors (shape: 4,)
-    """
-    # Collect all epi features from training set
-    train_epi = torch.cat([g.ndata['epi'] for g, *_ in train_graphs], dim=0)  # (total_train_nodes, 4)
-
-    # Compute per-feature mean and std
-    mean = train_epi.mean(dim=0)  # (4,)
-    std = train_epi.std(dim=0)    # (4,)
-
-    # Avoid division by zero
+    mean = train_epi.mean(dim=0)
+    std = train_epi.std(dim=0)
     std = torch.where(std < 1e-8, torch.ones_like(std), std)
 
-    # Normalize all graphs
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
             g.ndata['epi'] = (g.ndata['epi'] - mean) / std
@@ -127,12 +93,7 @@ def normalize_epi_features(train_graphs, val_graphs, test_graphs):
 
 
 def normalize_edge_features(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize edge features using training set statistics.
-
-    Returns:
-        edge_norm: Dict with 'mean' and 'std' tensors (shape: 3,)
-    """
+    """Z-score normalize edge features using training set statistics."""
     train_edge = torch.cat([g.edata['feat'] for g, *_ in train_graphs], dim=0)
 
     mean = train_edge.mean(dim=0)
@@ -147,15 +108,7 @@ def normalize_edge_features(train_graphs, val_graphs, test_graphs):
 
 
 def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
-    """
-    Z-score normalize a specific label using training set statistics.
-
-    Args:
-        label_name: 'R0' or 'Source_Sink_Score'
-
-    Returns:
-        norm: Dict with 'mean' and 'std' values
-    """
+    """Z-score normalize labels using training set statistics."""
     train_labels = torch.cat([g.ndata[label_name] for g, *_ in train_graphs])
     mean = train_labels.mean()
     std = train_labels.std()
@@ -170,89 +123,62 @@ def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
     return {'mean': mean, 'std': std}
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, r0_weight=1.0, sss_weight=1.0):
-    """Train for one epoch using batched graphs with dual output."""
+def train_epoch(model, dataloader, optimizer, criterion, device, label_name):
+    """Train for one epoch."""
     model.train()
     total_loss = 0
-    total_r0_loss = 0
-    total_sss_loss = 0
     total_nodes = 0
 
     for batched_g in dataloader:
         batched_g = batched_g.to(device)
         node_cblv = batched_g.ndata['cblv']
         edge_feat = batched_g.edata['feat']
-        r0_labels = batched_g.ndata['R0']
-        sss_labels = batched_g.ndata['Source_Sink_Score']
 
         optimizer.zero_grad()
-        r0_pred, sss_pred = model(batched_g, node_cblv, edge_feat)
+        predictions = model(batched_g, node_cblv, edge_feat)
+        labels = batched_g.ndata[label_name]
 
-        # Compute weighted loss
-        r0_loss = criterion(r0_pred, r0_labels)
-        sss_loss = criterion(sss_pred, sss_labels)
-        loss = r0_weight * r0_loss + sss_weight * sss_loss
-
+        loss = criterion(predictions, labels)
         loss.backward()
         optimizer.step()
 
         n_nodes = batched_g.num_nodes()
         total_loss += loss.item() * n_nodes
-        total_r0_loss += r0_loss.item() * n_nodes
-        total_sss_loss += sss_loss.item() * n_nodes
         total_nodes += n_nodes
 
-    return (total_loss / total_nodes,
-            total_r0_loss / total_nodes,
-            total_sss_loss / total_nodes)
+    return total_loss / total_nodes
 
 
-def evaluate(model, dataloader, criterion, device, r0_weight=1.0, sss_weight=1.0):
-    """Evaluate model on batched graphs. Returns losses and predictions."""
+def evaluate(model, dataloader, criterion, device, label_name):
+    """Evaluate model. Returns loss and predictions."""
     model.eval()
     total_loss = 0
-    total_r0_loss = 0
-    total_sss_loss = 0
     total_nodes = 0
-
-    all_r0_preds = []
-    all_r0_labels = []
-    all_sss_preds = []
-    all_sss_labels = []
+    all_preds = []
+    all_labels = []
 
     with torch.no_grad():
         for batched_g in dataloader:
             batched_g = batched_g.to(device)
             node_cblv = batched_g.ndata['cblv']
             edge_feat = batched_g.edata['feat']
-            r0_labels = batched_g.ndata['R0']
-            sss_labels = batched_g.ndata['Source_Sink_Score']
 
-            r0_pred, sss_pred = model(batched_g, node_cblv, edge_feat)
+            predictions = model(batched_g, node_cblv, edge_feat)
+            labels = batched_g.ndata[label_name]
 
-            r0_loss = criterion(r0_pred, r0_labels)
-            sss_loss = criterion(sss_pred, sss_labels)
-            loss = r0_weight * r0_loss + sss_weight * sss_loss
+            loss = criterion(predictions, labels)
 
             n_nodes = batched_g.num_nodes()
             total_loss += loss.item() * n_nodes
-            total_r0_loss += r0_loss.item() * n_nodes
-            total_sss_loss += sss_loss.item() * n_nodes
             total_nodes += n_nodes
 
-            all_r0_preds.extend(r0_pred.cpu().numpy())
-            all_r0_labels.extend(r0_labels.cpu().numpy())
-            all_sss_preds.extend(sss_pred.cpu().numpy())
-            all_sss_labels.extend(sss_labels.cpu().numpy())
+            all_preds.extend(predictions.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
 
     return {
         'loss': total_loss / total_nodes,
-        'r0_loss': total_r0_loss / total_nodes,
-        'sss_loss': total_sss_loss / total_nodes,
-        'r0_preds': np.array(all_r0_preds),
-        'r0_labels': np.array(all_r0_labels),
-        'sss_preds': np.array(all_sss_preds),
-        'sss_labels': np.array(all_sss_labels),
+        'preds': np.array(all_preds),
+        'labels': np.array(all_labels),
     }
 
 
@@ -264,21 +190,10 @@ def main():
     config['model']['subtree_width'] = args.subtree_width
     config['num_locations'] = args.num_locations
 
-    # Override config with optional command line arguments
-    if args.epochs:
-        config['train']['num_epochs'] = args.epochs
-    if args.lr:
-        config['train']['learning_rate'] = args.lr
-    if args.seed:
-        config['train']['random_seed'] = args.seed
-    if args.label_scale:
-        config['data']['label_scale'] = args.label_scale
-
-    # Get settings
+    # Get settings from config
+    label_name = config['label']  # 'R0' or 'Source_Sink_Score'
     label_scale = config['data'].get('label_scale', 'log')
     epi_scale = config['data'].get('epi_scale', 'log')
-    r0_weight = args.r0_weight
-    sss_weight = args.sss_weight
 
     # Setup
     output_dir = Path(args.output_dir)
@@ -288,7 +203,7 @@ def main():
     print(f"Device: {device}")
     print(f"num_locations: {args.num_locations}")
     print(f"subtree_width: {args.subtree_width}")
-    print(f"R0 weight: {r0_weight}, SSS weight: {sss_weight}")
+    print(f"Label: {label_name}")
 
     set_seed(config['train']['random_seed'])
 
@@ -325,11 +240,13 @@ def main():
         apply_epi_log_transform(val_graphs)
         apply_epi_log_transform(test_graphs)
 
-    print(f"  R0 label scale: {label_scale}")
-    if label_scale == 'log':
-        apply_r0_log_transform(train_graphs)
-        apply_r0_log_transform(val_graphs)
-        apply_r0_log_transform(test_graphs)
+    # Apply log transform to labels if needed (only for R0)
+    apply_log_to_label = (label_name == 'R0' and label_scale == 'log')
+    print(f"  Label scale: {label_scale}")
+    if apply_log_to_label:
+        apply_label_log_transform(train_graphs, label_name)
+        apply_label_log_transform(val_graphs, label_name)
+        apply_label_log_transform(test_graphs, label_name)
 
     # Normalize features using training set statistics
     epi_norm = normalize_epi_features(train_graphs, val_graphs, test_graphs)
@@ -340,18 +257,14 @@ def main():
     print(f"  Edge normalization: mean shape={edge_norm['mean'].shape}, std shape={edge_norm['std'].shape}")
 
     # Normalize labels
-    r0_norm = normalize_labels(train_graphs, val_graphs, test_graphs, 'R0')
-    r0_norm['scale'] = label_scale
-    print(f"  R0 normalization: mean={r0_norm['mean']:.4f}, std={r0_norm['std']:.4f}")
-
-    sss_norm = normalize_labels(train_graphs, val_graphs, test_graphs, 'Source_Sink_Score')
-    print(f"  SSS normalization: mean={sss_norm['mean']:.4f}, std={sss_norm['std']:.4f}")
+    label_norm = normalize_labels(train_graphs, val_graphs, test_graphs, label_name)
+    label_norm['scale'] = label_scale if label_name == 'R0' else 'linear'
+    print(f"  Label normalization: mean={label_norm['mean']:.4f}, std={label_norm['std']:.4f}")
 
     # Save normalization params
     torch.save(epi_norm, output_dir / 'epi_norm.pt')
     torch.save(edge_norm, output_dir / 'edge_norm.pt')
-    torch.save(r0_norm, output_dir / 'r0_norm.pt')
-    torch.save(sss_norm, output_dir / 'sss_norm.pt')
+    torch.save(label_norm, output_dir / 'label_norm.pt')
 
     # Extract just graphs for DataLoader
     train_g = [g for g, *_ in train_graphs]
@@ -384,29 +297,21 @@ def main():
     patience_counter = 0
     best_state = None
 
-    history = {'train_loss': [], 'val_loss': [],
-               'train_r0_loss': [], 'val_r0_loss': [],
-               'train_sss_loss': [], 'val_sss_loss': []}
+    history = {'train_loss': [], 'val_loss': []}
 
     for epoch in range(num_epochs):
-        train_loss, train_r0, train_sss = train_epoch(
-            model, train_loader, optimizer, criterion, device, r0_weight, sss_weight
-        )
-        val_results = evaluate(model, val_loader, criterion, device, r0_weight, sss_weight)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, label_name)
+        val_results = evaluate(model, val_loader, criterion, device, label_name)
+        val_loss = val_results['loss']
 
         history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_results['loss'])
-        history['train_r0_loss'].append(train_r0)
-        history['val_r0_loss'].append(val_results['r0_loss'])
-        history['train_sss_loss'].append(train_sss)
-        history['val_sss_loss'].append(val_results['sss_loss'])
+        history['val_loss'].append(val_loss)
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d} | Train: {train_loss:.4f} (R0:{train_r0:.4f}, SSS:{train_sss:.4f}) | "
-                  f"Val: {val_results['loss']:.4f} (R0:{val_results['r0_loss']:.4f}, SSS:{val_results['sss_loss']:.4f})")
+            print(f"  Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
 
-        if val_results['loss'] < best_val_loss:
-            best_val_loss = val_results['loss']
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             best_epoch = epoch
             patience_counter = 0
             best_state = deepcopy(model.state_dict())
@@ -421,49 +326,33 @@ def main():
 
     # Load best model and evaluate on test set
     model.load_state_dict(best_state)
-    test_results = evaluate(model, test_loader, criterion, device, r0_weight, sss_weight)
+    test_results = evaluate(model, test_loader, criterion, device, label_name)
 
     # Denormalize predictions and labels
-    # R0
-    r0_mean = r0_norm['mean'].item()
-    r0_std = r0_norm['std'].item()
-    test_r0_preds = test_results['r0_preds'] * r0_std + r0_mean
-    test_r0_labels = test_results['r0_labels'] * r0_std + r0_mean
+    label_mean = label_norm['mean'].item()
+    label_std = label_norm['std'].item()
+    test_preds = test_results['preds'] * label_std + label_mean
+    test_labels = test_results['labels'] * label_std + label_mean
 
-    if label_scale == 'log':
-        test_r0_preds = np.exp(test_r0_preds)
-        test_r0_labels = np.exp(test_r0_labels)
+    if apply_log_to_label:
+        test_preds = np.exp(test_preds)
+        test_labels = np.exp(test_labels)
 
-    # Source_Sink_Score
-    sss_mean = sss_norm['mean'].item()
-    sss_std = sss_norm['std'].item()
-    test_sss_preds = test_results['sss_preds'] * sss_std + sss_mean
-    test_sss_labels = test_results['sss_labels'] * sss_std + sss_mean
+    # Compute metrics
+    r2 = r2_score(test_labels, test_preds)
+    mse = mean_squared_error(test_labels, test_preds)
+
+    print(f"\nTest Results ({label_name}):")
+    print(f"  R² = {r2:.4f}")
+    print(f"  MSE = {mse:.4f}")
 
     # Save results
     torch.save(best_state, output_dir / 'best_model.pt')
-
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
-
-    results_df = pd.DataFrame({
-        'true_R0': test_r0_labels,
-        'pred_R0': test_r0_preds,
-        'true_Source_Sink_Score': test_sss_labels,
-        'pred_Source_Sink_Score': test_sss_preds,
-    })
-    results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
-
-    # Print test metrics
-    from sklearn.metrics import r2_score, mean_squared_error
-
-    r0_r2 = r2_score(test_r0_labels, test_r0_preds)
-    r0_mse = mean_squared_error(test_r0_labels, test_r0_preds)
-    sss_r2 = r2_score(test_sss_labels, test_sss_preds)
-    sss_mse = mean_squared_error(test_sss_labels, test_sss_preds)
-
-    print(f"\nTest Results:")
-    print(f"  R0:                 R²={r0_r2:.4f}, MSE={r0_mse:.4f}")
-    print(f"  Source_Sink_Score:  R²={sss_r2:.4f}, MSE={sss_mse:.4f}")
+    pd.DataFrame({
+        f'true_{label_name}': test_labels,
+        f'pred_{label_name}': test_preds,
+    }).to_csv(output_dir / 'test_predictions.csv', index=False)
 
     print(f"\nResults saved to: {output_dir}")
     print("Done!")

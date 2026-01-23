@@ -61,9 +61,6 @@ TRAIN_ARGS = {
 
     # Random seed
     'random_seed': 42,
-
-    # Output
-    'output_dir': './results',
 }
 
 # Data processing parameters
@@ -73,8 +70,9 @@ DATA_ARGS = {
     'epi_scale': 'log',     # Epi feature scale: 'log' (no +1, values always > 0)
 }
 
-# Labels to predict (dual output)
-LABELS = ['R0', 'Source_Sink_Score']
+# Label to predict (single-task: choose one)
+# Options: 'R0' or 'Source_Sink_Score'
+LABEL = 'R0'
 
 
 def get_config():
@@ -86,7 +84,7 @@ def get_config():
         'model': MODEL_ARGS,
         'train': TRAIN_ARGS,
         'data': DATA_ARGS,
-        'labels': LABELS,
+        'label': LABEL,
     }
 
 

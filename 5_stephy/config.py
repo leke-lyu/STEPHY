@@ -58,9 +58,6 @@ TRAIN_ARGS = {
 
     # Random seed
     'random_seed': 42,
-
-    # Output
-    'output_dir': './results',
 }
 
 # Data processing parameters

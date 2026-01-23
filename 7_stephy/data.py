@@ -3,9 +3,9 @@
 Data Loading and Preprocessing for CBLV-GAT with Epidemiological Features (7_stephy).
 
 Changes from 5_stephy:
-- Loads epi features from *_nd.csv instead of computing auxiliary stats from tree
+- Loads epi features from *_nf.csv instead of computing auxiliary stats from tree
 - Epi features: Initial_Population, Epidemic_Peak, Peak_Timing, Accumulated_Infections
-- Labels: R0 + Source_Sink_Score (dual output)
+- Labels: R0 or Source_Sink_Score (single-task, selected via config.py)
 
 Includes:
 - CBLV encoding via virtual subtree traversal
@@ -330,11 +330,11 @@ def compute_dtw_edge_features(tree_file, tree_idx=0):
 
 def load_node_data(input_folder, file_prefix, num_nodes):
     """
-    Load epidemiological features and labels from preprocessed *_nd.csv file.
+    Load epidemiological features and labels from *_nf.csv file.
 
     Args:
         input_folder: Path to data folder
-        file_prefix: File prefix (e.g., '0' for '0_nd.csv')
+        file_prefix: File prefix (e.g., '0' for '0_nf.csv')
         num_nodes: Expected number of nodes (locations)
 
     Returns:
@@ -342,12 +342,12 @@ def load_node_data(input_folder, file_prefix, num_nodes):
         labels: dict with 'R0' and 'Source_Sink_Score' arrays
     """
     input_folder = Path(input_folder)
-    nd_file = input_folder / f"{file_prefix}_nd.csv"
+    nf_file = input_folder / f"{file_prefix}_nf.csv"
 
-    if not nd_file.exists():
-        raise FileNotFoundError(f"Node data file not found: {nd_file}. Run preprocess.py first.")
+    if not nf_file.exists():
+        raise FileNotFoundError(f"Node feature file not found: {nf_file}")
 
-    df = pd.read_csv(nd_file)
+    df = pd.read_csv(nf_file)
 
     if len(df) != num_nodes:
         raise ValueError(f"Node data has {len(df)} rows, expected {num_nodes}")

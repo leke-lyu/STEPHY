@@ -2,6 +2,8 @@
 """
 Training script for CBLV-GAT.
 
+All settings are controlled via config.py.
+
 Usage:
     # Step 1: Analyze dataset to get parameters
     python3 analyze_trees.py /path/to/data
@@ -36,13 +38,8 @@ def parse_args():
                         help='Number of locations (from analyze_trees.py)')
     parser.add_argument('--subtree_width', type=int, required=True,
                         help='Max tips per location (from analyze_trees.py)')
-    # Optional overrides
-    parser.add_argument('--epochs', type=int, default=None, help='Override num_epochs')
-    parser.add_argument('--lr', type=float, default=None, help='Override learning_rate')
-    parser.add_argument('--seed', type=int, default=None, help='Override random_seed')
+    # Runtime options
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
-    parser.add_argument('--label_scale', choices=['linear', 'log'], default=None,
-                        help='Override label scale (linear or log)')
     return parser.parse_args()
 
 
@@ -55,43 +52,23 @@ def set_seed(seed):
 
 
 def apply_label_transform(graphs, label_scale):
-    """
-    Apply label transformation (log or linear) to R0 values.
-
-    Args:
-        graphs: List of (graph, id, locs, height) tuples
-        label_scale: 'linear' (no transform) or 'log' (log transform)
-    """
+    """Apply label transformation (log or linear) to R0 values."""
     if label_scale == 'log':
         for g, *_ in graphs:
             r0 = g.ndata['R0']
-            # Ensure positive values for log transform
             r0 = torch.clamp(r0, min=1e-8)
             g.ndata['R0'] = torch.log(r0)
 
 
 def normalize_labels(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize R0 labels using training set statistics.
-
-    Args:
-        train_graphs: List of (graph, id, locs, height) tuples for training
-        val_graphs: List of (graph, id, locs, height) tuples for validation
-        test_graphs: List of (graph, id, locs, height) tuples for testing
-
-    Returns:
-        label_norm: Dict with 'mean' and 'std' tensors
-    """
-    # Compute mean/std from training set only
+    """Z-score normalize R0 labels using training set statistics."""
     train_r0 = torch.cat([g.ndata['R0'] for g, *_ in train_graphs])
     mean = train_r0.mean()
     std = train_r0.std()
 
-    # Avoid division by zero
     if std < 1e-8:
         std = torch.tensor(1.0)
 
-    # Normalize all graphs
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
             g.ndata['R0'] = (g.ndata['R0'] - mean) / std
@@ -100,28 +77,13 @@ def normalize_labels(train_graphs, val_graphs, test_graphs):
 
 
 def normalize_aux_features(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize auxiliary features using training set statistics.
+    """Z-score normalize auxiliary features using training set statistics."""
+    train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)
 
-    Args:
-        train_graphs: List of (graph, id, locs, height) tuples for training
-        val_graphs: List of (graph, id, locs, height) tuples for validation
-        test_graphs: List of (graph, id, locs, height) tuples for testing
-
-    Returns:
-        aux_norm: Dict with 'mean' and 'std' tensors (shape: 15,)
-    """
-    # Collect all aux features from training set
-    train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)  # (total_train_nodes, 15)
-
-    # Compute per-feature mean and std
-    mean = train_aux.mean(dim=0)  # (15,)
-    std = train_aux.std(dim=0)    # (15,)
-
-    # Avoid division by zero (replace zero std with 1.0)
+    mean = train_aux.mean(dim=0)
+    std = train_aux.std(dim=0)
     std = torch.where(std < 1e-8, torch.ones_like(std), std)
 
-    # Normalize all graphs
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
             g.ndata['aux'] = (g.ndata['aux'] - mean) / std
@@ -130,28 +92,13 @@ def normalize_aux_features(train_graphs, val_graphs, test_graphs):
 
 
 def normalize_edge_features(train_graphs, val_graphs, test_graphs):
-    """
-    Z-score normalize edge features using training set statistics.
+    """Z-score normalize edge features using training set statistics."""
+    train_edge = torch.cat([g.edata['feat'] for g, *_ in train_graphs], dim=0)
 
-    Args:
-        train_graphs: List of (graph, id, locs, height) tuples for training
-        val_graphs: List of (graph, id, locs, height) tuples for validation
-        test_graphs: List of (graph, id, locs, height) tuples for testing
-
-    Returns:
-        edge_norm: Dict with 'mean' and 'std' tensors (shape: 3,)
-    """
-    # Collect all edge features from training set
-    train_edge = torch.cat([g.edata['feat'] for g, *_ in train_graphs], dim=0)  # (total_train_edges, 3)
-
-    # Compute per-feature mean and std
-    mean = train_edge.mean(dim=0)  # (3,)
-    std = train_edge.std(dim=0)    # (3,)
-
-    # Avoid division by zero (replace zero std with 1.0)
+    mean = train_edge.mean(dim=0)
+    std = train_edge.std(dim=0)
     std = torch.where(std < 1e-8, torch.ones_like(std), std)
 
-    # Normalize all graphs
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
             g.edata['feat'] = (g.edata['feat'] - mean) / std
@@ -208,10 +155,7 @@ def evaluate(model, dataloader, criterion, device):
             all_labels.extend(labels.cpu().numpy())
 
     avg_loss = total_loss / total_nodes
-    all_preds = np.array(all_preds)
-    all_labels = np.array(all_labels)
-
-    return avg_loss, all_preds, all_labels
+    return avg_loss, np.array(all_preds), np.array(all_labels)
 
 
 def main():
@@ -222,18 +166,8 @@ def main():
     config['model']['subtree_width'] = args.subtree_width
     config['num_locations'] = args.num_locations
 
-    # Override config with optional command line arguments
-    if args.epochs:
-        config['train']['num_epochs'] = args.epochs
-    if args.lr:
-        config['train']['learning_rate'] = args.lr
-    if args.seed:
-        config['train']['random_seed'] = args.seed
-    if args.label_scale:
-        config['data']['label_scale'] = args.label_scale
-
-    # Get label scale setting
-    label_scale = config['data'].get('label_scale', 'linear')
+    # Get settings from config
+    label_scale = config['data'].get('label_scale', 'log')
 
     # Setup
     output_dir = Path(args.output_dir)
@@ -261,7 +195,7 @@ def main():
             )
     print(f"  All graphs have {args.num_locations} locations ✓")
 
-    # Train/val/test split (train_ratio for train, remaining split 50/50 for val/test)
+    # Train/val/test split
     train_ratio = config['train']['train_ratio']
     train_graphs, temp_graphs = train_test_split(
         all_graphs, test_size=1-train_ratio, random_state=config['train']['random_seed']
@@ -289,7 +223,7 @@ def main():
 
     # Normalize R0 labels using training set statistics
     label_norm = normalize_labels(train_graphs, val_graphs, test_graphs)
-    label_norm['scale'] = label_scale  # Store scale for denormalization
+    label_norm['scale'] = label_scale
     print(f"  R0 normalization: mean={label_norm['mean']:.4f}, std={label_norm['std']:.4f}")
 
     # Save normalization params
@@ -297,7 +231,7 @@ def main():
     torch.save(edge_norm, output_dir / 'edge_norm.pt')
     torch.save(label_norm, output_dir / 'label_norm.pt')
 
-    # Extract just graphs for DataLoader (graphs are tuples: (g, id, locs, height))
+    # Extract just graphs for DataLoader
     train_g = [g for g, *_ in train_graphs]
     val_g = [g for g, *_ in val_graphs]
     test_g = [g for g, *_ in test_graphs]
@@ -356,9 +290,7 @@ def main():
 
     # Load best model and evaluate on test set
     model.load_state_dict(best_state)
-    _, test_preds_norm, test_labels_norm = evaluate(
-        model, test_loader, criterion, device
-    )
+    _, test_preds_norm, test_labels_norm = evaluate(model, test_loader, criterion, device)
 
     # Denormalize predictions and labels
     label_mean = label_norm['mean'].item()
@@ -371,16 +303,13 @@ def main():
         test_preds = np.exp(test_preds)
         test_labels = np.exp(test_labels)
 
-    # Save results (metrics can be recomputed from test_predictions.csv)
+    # Save results
     torch.save(best_state, output_dir / 'best_model.pt')
-
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
-
-    results_df = pd.DataFrame({
+    pd.DataFrame({
         'true_R0': test_labels,
         'pred_R0': test_preds
-    })
-    results_df.to_csv(output_dir / 'test_predictions.csv', index=False)
+    }).to_csv(output_dir / 'test_predictions.csv', index=False)
 
     print(f"\nResults saved to: {output_dir}")
     print("Done!")

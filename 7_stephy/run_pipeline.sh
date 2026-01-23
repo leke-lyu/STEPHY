@@ -1,122 +1,117 @@
 #!/bin/bash
 #
-# STEPHY 7 Pipeline: CBLV-GAT with Epidemiological Features
-#
-# This pipeline integrates phylogenetic tree features (CBLV) with epidemiological
-# data (Initial_Population, Epidemic_Peak, Peak_Timing, Accumulated_Infections)
-# to predict R0 and Source/Sink scores.
+# Batch training pipeline for STEPHY 7 (CBLV-GAT) with Epidemiological Features
 #
 # Usage:
-#   bash run_pipeline.sh INPUT_FOLDER1 [INPUT_FOLDER2 ...] OUTPUT_FOLDER
+#   bash run_pipeline.sh inputfolder_0 inputfolder_1 ... outfolder
 #
 # Example:
-#   bash run_pipeline.sh /data/500_1_MM0.002 /data/500_1_MM0.005 /output/stephy7
+#   bash run_pipeline.sh /Users/lukelyu/Desktop/epidata/500_1_MM0.002 \
+#                        /Users/lukelyu/Desktop/epidata/500_1_MM0.005 \
+#                        /Users/lukelyu/Desktop/epidata/stephy7
 #
 # Requirements:
 #   - Input folders must contain:
 #     * *_beast2.trees files (phylogenetic trees)
-#     * *_beast2.traj files (epidemic trajectories)
-#     * *_parameter.csv files (ground truth parameters)
+#     * *_nf.csv files (node features + labels)
+#
 
 set -e  # Exit on error
 
+# Prevent Python from creating __pycache__ folders
+export PYTHONDONTWRITEBYTECODE=1
+
+# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Parse arguments
+# Check minimum arguments
 if [ "$#" -lt 2 ]; then
-    echo "Usage: $0 INPUT_FOLDER1 [INPUT_FOLDER2 ...] OUTPUT_FOLDER"
-    echo ""
-    echo "Example:"
-    echo "  $0 /data/500_1_MM0.002 /data/500_1_MM0.005 /output/stephy7"
+    echo "Usage: bash $0 inputfolder_0 [inputfolder_1 ...] outfolder"
+    echo "Example: bash $0 /path/to/epidata/500_1_MM0.002 /path/to/epidata/500_1_MM0.005 ./results"
     exit 1
 fi
 
-# Get all arguments
-ALL_ARGS=("$@")
-NUM_ARGS=${#ALL_ARGS[@]}
+# Parse arguments: all but last are input folders, last is output folder
+ARGS=("$@")
+NUM_ARGS=${#ARGS[@]}
+OUT_FOLDER="${ARGS[$NUM_ARGS-1]}"
+INPUT_FOLDERS=("${ARGS[@]:0:$NUM_ARGS-1}")
 
-# Last argument is output folder
-OUTPUT_BASE="${ALL_ARGS[$NUM_ARGS-1]}"
-
-# Everything else is input folders
-INPUT_FOLDERS=("${ALL_ARGS[@]:0:$NUM_ARGS-1}")
-
-echo "============================================================"
-echo "STEPHY 7 Pipeline: CBLV-GAT with Epidemiological Features"
-echo "============================================================"
+echo "=============================================="
+echo "STEPHY 7 (CBLV-GAT) with Epi Features"
+echo "=============================================="
+echo "Script directory: $SCRIPT_DIR"
+echo "Output folder: $OUT_FOLDER"
+echo "Number of datasets: ${#INPUT_FOLDERS[@]}"
 echo ""
-echo "Input folders: ${#INPUT_FOLDERS[@]}"
-for folder in "${INPUT_FOLDERS[@]}"; do
-    echo "  - $folder"
-done
-echo "Output base: $OUTPUT_BASE"
-echo ""
+
+# Create output folder
+mkdir -p "$OUT_FOLDER"
 
 # Process each input folder
 for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
+    echo ""
+    echo "=============================================="
+    echo "Processing: $INPUT_FOLDER"
+    echo "=============================================="
+
+    # Extract dataset name from input folder path
     DATASET_NAME=$(basename "$INPUT_FOLDER")
-    OUTPUT_DIR="$OUTPUT_BASE/$DATASET_NAME"
+    WORK_DIR="$OUT_FOLDER/$DATASET_NAME"
 
+    echo "Dataset name: $DATASET_NAME"
+    echo "Working directory: $WORK_DIR"
     echo ""
-    echo "============================================================"
-    echo "Processing: $DATASET_NAME"
-    echo "============================================================"
 
-    # Step 1: Preprocess trajectory data to generate *_nd.csv files
-    echo ""
-    echo "[Step 1/3] Preprocessing trajectory data..."
-    echo "  Command: python3 $SCRIPT_DIR/preprocess.py $INPUT_FOLDER"
-    python3 "$SCRIPT_DIR/preprocess.py" "$INPUT_FOLDER"
+    # Create working directory
+    mkdir -p "$WORK_DIR"
 
-    # Step 2: Analyze trees to get parameters
-    echo ""
-    echo "[Step 2/3] Analyzing tree structure..."
-    echo "  Command: python3 $SCRIPT_DIR/analyze_trees.py $INPUT_FOLDER"
-    ANALYSIS_OUTPUT=$(python3 "$SCRIPT_DIR/analyze_trees.py" "$INPUT_FOLDER")
-    echo "$ANALYSIS_OUTPUT"
+    # ==========================================
+    # Step 1: Analyze trees to get parameters
+    # ==========================================
+    echo "[Step 1/2] Analyzing trees..."
+
+    ANALYZE_OUTPUT=$(python3 "$SCRIPT_DIR/analyze_trees.py" "$INPUT_FOLDER")
+    echo "$ANALYZE_OUTPUT"
 
     # Parse num_locations and subtree_width from output
-    NUM_LOCATIONS=$(echo "$ANALYSIS_OUTPUT" | grep -oP '(?<=--num_locations )\d+')
-    SUBTREE_WIDTH=$(echo "$ANALYSIS_OUTPUT" | grep -oP '(?<=--subtree_width )\d+')
+    NUM_LOCATIONS=$(echo "$ANALYZE_OUTPUT" | grep "\-\-num_locations" | awk '{print $2}')
+    SUBTREE_WIDTH=$(echo "$ANALYZE_OUTPUT" | grep "\-\-subtree_width" | awk '{print $2}')
 
     if [ -z "$NUM_LOCATIONS" ] || [ -z "$SUBTREE_WIDTH" ]; then
-        echo "Error: Failed to parse parameters from analyze_trees.py"
-        exit 1
+        echo "Error: Could not parse parameters from analyze_trees.py output"
+        echo "Skipping dataset: $DATASET_NAME"
+        continue
     fi
 
     echo ""
-    echo "  Extracted parameters:"
-    echo "    num_locations: $NUM_LOCATIONS"
-    echo "    subtree_width: $SUBTREE_WIDTH"
-
-    # Step 3: Train model
+    echo "Parsed parameters:"
+    echo "  num_locations: $NUM_LOCATIONS"
+    echo "  subtree_width: $SUBTREE_WIDTH"
     echo ""
-    echo "[Step 3/3] Training CBLV-GAT model..."
-    echo "  Command: python3 $SCRIPT_DIR/train.py \\"
-    echo "           --input_dir $INPUT_FOLDER \\"
-    echo "           --output_dir $OUTPUT_DIR \\"
-    echo "           --num_locations $NUM_LOCATIONS \\"
-    echo "           --subtree_width $SUBTREE_WIDTH"
 
-    mkdir -p "$OUTPUT_DIR"
+    # ==========================================
+    # Step 2: Train model
+    # ==========================================
+    echo "[Step 2/2] Training CBLV-GAT model..."
 
     python3 "$SCRIPT_DIR/train.py" \
-        --input_dir "$INPUT_FOLDER" \
-        --output_dir "$OUTPUT_DIR" \
         --num_locations "$NUM_LOCATIONS" \
-        --subtree_width "$SUBTREE_WIDTH"
+        --subtree_width "$SUBTREE_WIDTH" \
+        --input_dir "$INPUT_FOLDER" \
+        --output_dir "$WORK_DIR"
 
-    echo ""
+    echo "Training complete."
+
+    echo "=============================================="
     echo "Completed: $DATASET_NAME"
-    echo "Results saved to: $OUTPUT_DIR"
+    echo "Results saved to: $WORK_DIR"
+    echo "=============================================="
+    echo ""
 done
 
 echo ""
-echo "============================================================"
-echo "Pipeline Complete!"
-echo "============================================================"
-echo "Output directories:"
-for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
-    DATASET_NAME=$(basename "$INPUT_FOLDER")
-    echo "  - $OUTPUT_BASE/$DATASET_NAME"
-done
+echo "=============================================="
+echo "All datasets processed!"
+echo "=============================================="
+echo "Output folder: $OUT_FOLDER"
