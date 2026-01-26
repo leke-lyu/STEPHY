@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """
-Configuration for CBLV-GAT with Epidemiological Features (7_stephy).
+Configuration for STEPHY+ (Phylogeny + Epidemiological Data).
 
-Changes from 5_stephy:
-- CBLV encoder: 128-dim -> 96-dim (0.75x scaling)
-- Auxiliary branch -> Epi branch: 4 epi features -> 64 -> 32
-- Combined embedding: 160-dim -> 128-dim
-- Labels: R0 only -> R0 + Source_Sink_Score (dual output)
+Combines phylogenetic (CBLV) and epidemiological features for spatial transmission estimation.
 
-Dataset parameters (subtree_width, num_locations) must be provided via CLI:
-  python3 train.py --num_locations ... --subtree_width ... --input_dir ... --output_dir ...
+Output files:
+- training_history.csv: Loss in NORMALIZED scale (what optimizer sees)
+- test_predictions.csv: Predictions in TRUE scale (for interpretation)
+- Test R2/MSE printed: TRUE scale
 """
 
 # Model architecture
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
-    # CNN encoder branches (scaled to 0.75x of 5_stephy)
-    # Output: 48 + 24 + 24 = 96 per node (was 64 + 32 + 32 = 128)
+    # CNN encoder branches for CBLV (phylogenetic) features
+    # Output: 48 + 24 + 24 = 96 per node
     'phy_channel_plain': [12, 24, 48],    # 3 layers, ends at 48 (was 64)
     'phy_channel_stride': [12, 24],        # 2 layers, ends at 24 (was 32)
     'phy_channel_dilate': [12, 24],        # 2 layers, ends at 24 (was 32)
@@ -66,14 +64,12 @@ TRAIN_ARGS = {
 # Data processing parameters
 DATA_ARGS = {
     'dtw_num_points': 200,  # KDE grid resolution for DTW curves
-    'label_scale': 'log',   # Label scale for R0: 'linear' or 'log'
-    'epi_scale': 'log',     # Epi feature scale: 'log' (no +1, values always > 0)
+    # Normalization options: 'zscore' or 'none'
+    'epi_log': True,        # Apply log to epi features before normalization
+    'epi_norm': 'zscore',   # Epi feature normalization
+    'edge_norm': 'zscore',  # Edge feature normalization
+    'label_norm': 'zscore', # Label normalization
 }
-
-# Label to predict (single-task: choose one)
-# Options: 'R0' or 'Source_Sink_Score'
-LABEL = 'R0'
-
 
 def get_config():
     """Get full configuration dictionary.
@@ -84,7 +80,6 @@ def get_config():
         'model': MODEL_ARGS,
         'train': TRAIN_ARGS,
         'data': DATA_ARGS,
-        'label': LABEL,
     }
 
 

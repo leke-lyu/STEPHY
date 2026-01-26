@@ -15,6 +15,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from beast2_parser import parse_trees
+
 
 def analyze_beast2_trees(input_folder):
     """Analyze BEAST2 tree files and return statistics."""
@@ -33,7 +35,7 @@ def analyze_beast2_trees(input_folder):
         with open(tree_file) as f:
             content = f.read()
 
-        trees = re.findall(r'tree STATE_\d+ = (.+?)(?=\ntree |\nEnd;|$)', content, re.DOTALL)
+        trees = parse_trees(content)
 
         for idx, tree_str in enumerate(trees):
             tree_id = f"{file_prefix}_{idx}"
