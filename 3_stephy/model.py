@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-CBLV-GAT Model for Location-Specific R0 Estimation (Base Model).
+STEPHY Model: CBLV-GAT with Phylogenetic Features Only.
 
-Combines:
-- CNN encoder (3-branch: plain/stride/dilate) for CBLV subtree features
-- GAT layer for spatial message passing using DTW edge features
+Uses phylogenetic (CBLV encoder) features with GAT for spatial aggregation.
 """
 
 import torch
@@ -24,7 +22,7 @@ class CBLVConvEncoder(nn.Module):
     - Dilate: Long-range dependencies with dilated convolutions
 
     Input: (batch, 4, subtree_width) - CBLV features per node
-    Output: (batch, 128) - Node embedding
+    Output: (batch, 128) - Phylogenetic embedding
     """
 
     def __init__(self, args):
@@ -188,12 +186,15 @@ class GraphEdgeAttention(nn.Module):
 
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT: CNN encoder + GAT for R0 estimation.
+    CBLV-GAT: CNN encoder + GAT for single-task prediction.
 
     Architecture:
     1. CNN encoder processes each node's CBLV independently -> 128-dim
     2. GAT aggregates spatial information using DTW edges -> 256-dim
-    3. Classifier predicts R0 per node
+    3. Classifier predicts target label per node
+
+    Args:
+        args: Config dict with model parameters
     """
 
     def __init__(self, args):
@@ -210,10 +211,11 @@ class CBLV_GAT(nn.Module):
         attn_dim = args['attn_dim']
         self.graph_attention = GraphEdgeAttention(cnn_output_dim, edge_dim, attn_dim)
 
-        # Classifier: 256 -> 128 -> 64 -> 32 -> 1
-        gat_output_dim = cnn_output_dim * 2  # 256 (concat self + agg)
+        # GAT output: concat(self_128, neighbor_agg_128) = 256
+        gat_output_dim = cnn_output_dim * 2  # 256
         self.lbl_channel = list(args['lbl_channel'])
 
+        # Classifier: 256 -> 128 -> 64 -> 32 -> 1
         self.classifier = nn.ModuleList()
         in_features = gat_output_dim
         for out_features in self.lbl_channel:
@@ -244,7 +246,7 @@ class CBLV_GAT(nn.Module):
             edge_feat: (E, 3) DTW edge features
 
         Returns:
-            (N,) R0 predictions per node
+            (N,) predictions per node
         """
         # CNN encode each node's CBLV
         h = self.cnn_encoder(node_cblv)  # (N, 128)

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for CBLV-GAT (Base Model).
+Data Loading and Preprocessing for STEPHY (Phylogeny-only Model).
 
-Includes:
-- CBLV encoding via virtual subtree traversal
-- DTW edge feature extraction (Numba JIT optimized)
-- DGL graph construction
-- Label extraction (R0)
+Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
 """
 
 import sys
 import re
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
@@ -22,15 +19,8 @@ import dendropy as dp
 from scipy.stats import gaussian_kde
 from numba import jit
 
-# Add utils to path
-SCRIPT_DIR = Path(__file__).parent
-UTILS_DIR = SCRIPT_DIR.parent / 'utils'
-if str(UTILS_DIR) not in sys.path:
-    sys.path.insert(0, str(UTILS_DIR))
-
-from trajectory_utils import load_R0_and_population_from_csv
-
 from config import DATA_ARGS
+from beast2_parser import parse_trees, count_trees
 
 
 # ==============================================================================
@@ -206,13 +196,13 @@ class VirtualSubtreeEncoder:
 
 
 # ==============================================================================
-# DTW Edge Features (Numba JIT optimized)
+# DTW Edge Features
 # ==============================================================================
 
 def extract_tip_times(tree_file, tree_idx=0):
     """Extract tip sampling times grouped by location from BEAST2 tree file."""
     with open(tree_file) as f:
-        trees = re.findall(r'tree STATE_\d+ = (.+?)(?=\ntree |\nEnd;|$)', f.read(), re.DOTALL)
+        trees = parse_trees(f.read())
     if not trees or tree_idx >= len(trees):
         return {}
 
@@ -327,24 +317,39 @@ def compute_dtw_edge_features(tree_file, tree_idx=0):
 
 
 # ==============================================================================
-# Label Extraction
+# Label Loading
 # ==============================================================================
 
-def extract_labels(input_folder, file_prefix, num_nodes):
+def load_labels(input_folder, file_prefix, num_nodes):
     """
-    Extract R0 labels for each node from parameter CSV.
+    Load labels from *_nf.csv file.
 
     Args:
         input_folder: Path to data folder
-        file_prefix: File prefix (e.g., '0' for '0_parameter.csv')
-        num_nodes: Number of nodes (locations)
+        file_prefix: File prefix (e.g., '0' for '0_nf.csv')
+        num_nodes: Expected number of nodes (locations)
 
     Returns:
-        np.ndarray: R0 values for each location, shape (num_nodes,)
+        labels: dict with 'R0' and 'Source_Sink_Score' arrays
     """
     input_folder = Path(input_folder)
-    params = load_R0_and_population_from_csv(str(input_folder / f"{file_prefix}_parameter.csv"))
-    return np.array([params['R0'].get(i, 0.0) for i in range(num_nodes)], dtype=np.float32)
+    nf_file = input_folder / f"{file_prefix}_nf.csv"
+
+    if not nf_file.exists():
+        raise FileNotFoundError(f"Label file not found: {nf_file}")
+
+    df = pd.read_csv(nf_file)
+
+    if len(df) != num_nodes:
+        raise ValueError(f"Label data has {len(df)} rows, expected {num_nodes}")
+
+    # Extract labels
+    labels = {
+        'R0': df['R0'].values.astype(np.float32),
+        'Source_Sink_Score': df['Source_Sink_Score'].values.astype(np.float32)
+    }
+
+    return labels
 
 
 # ==============================================================================
@@ -370,6 +375,7 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
 
     # CBLV shape: (n_nodes, subtree_width, 4) -> transpose to (n_nodes, 4, subtree_width)
     node_cblv = np.zeros((n_nodes, subtree_width, 4))
+
     for i, loc in enumerate(locations):
         cblv, _, _ = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
         node_cblv[i] = cblv
@@ -382,15 +388,16 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     if locations != dtw_locs:
         raise ValueError(f"Location mismatch: CBLV={locations}, DTW={dtw_locs}")
 
-    # Labels (R0 from parameter CSV)
+    # Load labels from preprocessed CSV
     file_prefix = Path(tree_file).stem.replace('_beast2', '')
-    r0_labels = extract_labels(input_folder, file_prefix, n_nodes)
+    labels = load_labels(input_folder, file_prefix, n_nodes)
 
     # Construct graph
     g = dgl.graph((src, dst), num_nodes=n_nodes)
     g.ndata['cblv'] = torch.tensor(node_cblv, dtype=torch.float32)
     g.ndata['location'] = torch.tensor(locations, dtype=torch.long)
-    g.ndata['R0'] = torch.tensor(r0_labels, dtype=torch.float32)
+    g.ndata['R0'] = torch.tensor(labels['R0'], dtype=torch.float32)
+    g.ndata['Source_Sink_Score'] = torch.tensor(labels['Source_Sink_Score'], dtype=torch.float32)
     g.edata['feat'] = torch.tensor(edge_feats, dtype=torch.float32)
 
     return g, locations, tree_height
@@ -412,7 +419,7 @@ def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees',
     for tree_file in iterator:
         file_prefix = tree_file.stem.replace('_beast2', '')
         with open(tree_file) as f:
-            n_trees = len(re.findall(r'tree STATE_\d+', f.read()))
+            n_trees = count_trees(f.read())
 
         for idx in range(n_trees):
             try:

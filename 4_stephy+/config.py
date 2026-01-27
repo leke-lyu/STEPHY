@@ -49,8 +49,8 @@ MODEL_ARGS = {
 TRAIN_ARGS = {
     'learning_rate': 0.001,
     'batch_size': 64,       # Graph-level batching (64 graphs per batch)
-    'num_epochs': 300,
-    'early_stopping_patience': 15,
+    'num_epochs': 500,
+    'early_stopping_patience': 25,
 
     # Data split
     'train_ratio': 0.6,

@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Configuration for CBLV-GAT training (Base Model).
+Configuration for STEPHY (Phylogeny-only Model).
 
-Dataset parameters (subtree_width, num_locations) must be provided via CLI:
-  python3 train.py --num_locations ... --subtree_width ... --input_dir ... --output_dir ...
+Uses phylogenetic (CBLV) features for spatial transmission estimation.
+
+Output files:
+- training_history.csv: Loss in NORMALIZED scale (what optimizer sees)
+- test_predictions.csv: Predictions in TRUE scale (for interpretation)
+- Test R2/MSE printed: TRUE scale
 """
 
 # Model architecture
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
-    # CNN encoder branches
+    # CNN encoder branches for CBLV (phylogenetic) features
     # Output: 64 + 32 + 32 = 128 per node
-    'phy_channel_plain': [16, 32, 64],   # 3 layers, ends at 64
-    'phy_channel_stride': [16, 32],       # 2 layers, ends at 32
-    'phy_channel_dilate': [16, 32],       # 2 layers, ends at 32
+    'phy_channel_plain': [16, 32, 64],    # 3 layers, ends at 64
+    'phy_channel_stride': [16, 32],        # 2 layers, ends at 32
+    'phy_channel_dilate': [16, 32],        # 2 layers, ends at 32
 
     'phy_kernel_plain': [3, 5, 7],
     'phy_kernel_stride': [7, 9],
@@ -27,7 +31,8 @@ MODEL_ARGS = {
     'edge_dim': 3,      # DTW features: distance, lag_mean, lag_std
     'attn_dim': 16,     # Attention hidden dimension
 
-    # Classifier: 256 -> 128 -> 64 -> 32 -> 1
+    # Classifier: 256 -> 128 -> 64 -> 32 -> num_labels
+    # Input is 256-dim: 128 CBLV * 2 (self + neighbor_agg)
     'lbl_channel': [128, 64, 32],
 
     # Activation
@@ -38,8 +43,8 @@ MODEL_ARGS = {
 TRAIN_ARGS = {
     'learning_rate': 0.001,
     'batch_size': 64,       # Graph-level batching (64 graphs per batch)
-    'num_epochs': 300,
-    'early_stopping_patience': 15,
+    'num_epochs': 500,
+    'early_stopping_patience': 25,
 
     # Data split
     'train_ratio': 0.6,
@@ -53,12 +58,10 @@ TRAIN_ARGS = {
 # Data processing parameters
 DATA_ARGS = {
     'dtw_num_points': 200,  # KDE grid resolution for DTW curves
-    'label_scale': 'log',   # Label scale: 'linear' or 'log'
+    # Normalization options: 'zscore' or 'none'
+    'edge_norm': 'zscore',  # Edge feature normalization
+    'label_norm': 'zscore', # Label normalization
 }
-
-# Labels to predict
-LABELS = ['R0']
-
 
 def get_config():
     """Get full configuration dictionary.
@@ -69,7 +72,6 @@ def get_config():
         'model': MODEL_ARGS,
         'train': TRAIN_ARGS,
         'data': DATA_ARGS,
-        'labels': LABELS,
     }
 
 

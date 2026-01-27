@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """
-Training script for CBLV-GAT (Base Model).
+Training script for STEPHY (Phylogeny-only Model).
 
-All settings are controlled via config.py.
-
-Usage:
-    # Step 1: Analyze dataset to get parameters
-    python3 analyze_trees.py /path/to/data
-
-    # Step 2: Train with required parameters
-    python3 train.py --num_locations ... --subtree_width ... \\
-                     --input_dir /path/to/data --output_dir ./results
+Requires precomputed graphs from build_graphs.py.
 """
 
 import argparse
@@ -22,23 +14,19 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
 from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
-from data import build_all_graphs
 from config import get_config
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train CBLV-GAT model')
-    # Required arguments
-    parser.add_argument('--input_dir', required=True, help='Input data directory')
+    parser = argparse.ArgumentParser(description='STEPHY: Train with phylogeny data')
+    parser.add_argument('--graphs', required=True, help='Precomputed graphs file (from build_graphs.py)')
     parser.add_argument('--output_dir', required=True, help='Output directory')
-    parser.add_argument('--num_locations', type=int, required=True,
-                        help='Number of locations (from analyze_trees.py)')
-    parser.add_argument('--subtree_width', type=int, required=True,
-                        help='Max tips per location (from analyze_trees.py)')
-    # Runtime options
+    parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
+    parser.add_argument('--label', choices=['R0', 'Source_Sink_Score'], required=True, help='Label to predict')
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
     return parser.parse_args()
 
@@ -49,31 +37,6 @@ def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-
-
-def apply_label_transform(graphs, label_scale):
-    """Apply label transformation (log or linear) to R0 values."""
-    if label_scale == 'log':
-        for g, *_ in graphs:
-            r0 = g.ndata['R0']
-            r0 = torch.clamp(r0, min=1e-8)
-            g.ndata['R0'] = torch.log(r0)
-
-
-def normalize_labels(train_graphs, val_graphs, test_graphs):
-    """Z-score normalize R0 labels using training set statistics."""
-    train_r0 = torch.cat([g.ndata['R0'] for g, *_ in train_graphs])
-    mean = train_r0.mean()
-    std = train_r0.std()
-
-    if std < 1e-8:
-        std = torch.tensor(1.0)
-
-    for graph_list in [train_graphs, val_graphs, test_graphs]:
-        for g, *_ in graph_list:
-            g.ndata['R0'] = (g.ndata['R0'] - mean) / std
-
-    return {'mean': mean, 'std': std}
 
 
 def normalize_edge_features(train_graphs, val_graphs, test_graphs):
@@ -91,8 +54,24 @@ def normalize_edge_features(train_graphs, val_graphs, test_graphs):
     return {'mean': mean, 'std': std}
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device):
-    """Train for one epoch using batched graphs."""
+def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
+    """Z-score normalize labels using training set statistics."""
+    train_labels = torch.cat([g.ndata[label_name] for g, *_ in train_graphs])
+    mean = train_labels.mean()
+    std = train_labels.std()
+
+    if std < 1e-8:
+        std = torch.tensor(1.0)
+
+    for graph_list in [train_graphs, val_graphs, test_graphs]:
+        for g, *_ in graph_list:
+            g.ndata[label_name] = (g.ndata[label_name] - mean) / std
+
+    return {'mean': mean, 'std': std}
+
+
+def train_epoch(model, dataloader, optimizer, criterion, device, label_name):
+    """Train for one epoch."""
     model.train()
     total_loss = 0
     total_nodes = 0
@@ -101,22 +80,24 @@ def train_epoch(model, dataloader, optimizer, criterion, device):
         batched_g = batched_g.to(device)
         node_cblv = batched_g.ndata['cblv']
         edge_feat = batched_g.edata['feat']
-        labels = batched_g.ndata['R0']
 
         optimizer.zero_grad()
-        pred = model(batched_g, node_cblv, edge_feat)
-        loss = criterion(pred, labels)
+        predictions = model(batched_g, node_cblv, edge_feat)
+        labels = batched_g.ndata[label_name]
+
+        loss = criterion(predictions, labels)
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item() * batched_g.num_nodes()
-        total_nodes += batched_g.num_nodes()
+        n_nodes = batched_g.num_nodes()
+        total_loss += loss.item() * n_nodes
+        total_nodes += n_nodes
 
     return total_loss / total_nodes
 
 
-def evaluate(model, dataloader, criterion, device):
-    """Evaluate model on batched graphs. Returns loss and predictions."""
+def evaluate(model, dataloader, criterion, device, label_name):
+    """Evaluate model. Returns loss and predictions."""
     model.eval()
     total_loss = 0
     total_nodes = 0
@@ -128,57 +109,52 @@ def evaluate(model, dataloader, criterion, device):
             batched_g = batched_g.to(device)
             node_cblv = batched_g.ndata['cblv']
             edge_feat = batched_g.edata['feat']
-            labels = batched_g.ndata['R0']
 
-            pred = model(batched_g, node_cblv, edge_feat)
-            loss = criterion(pred, labels)
+            predictions = model(batched_g, node_cblv, edge_feat)
+            labels = batched_g.ndata[label_name]
 
-            total_loss += loss.item() * batched_g.num_nodes()
-            total_nodes += batched_g.num_nodes()
+            loss = criterion(predictions, labels)
 
-            all_preds.extend(pred.cpu().numpy())
+            n_nodes = batched_g.num_nodes()
+            total_loss += loss.item() * n_nodes
+            total_nodes += n_nodes
+
+            all_preds.extend(predictions.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-    avg_loss = total_loss / total_nodes
-    return avg_loss, np.array(all_preds), np.array(all_labels)
+    return {
+        'loss': total_loss / total_nodes,
+        'preds': np.array(all_preds),
+        'labels': np.array(all_labels),
+    }
 
 
 def main():
     args = parse_args()
     config = get_config()
 
-    # Set required parameters from CLI
-    config['model']['subtree_width'] = args.subtree_width
+    # Load graphs
+    all_graphs = torch.load(args.graphs)
+    subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
+
+    config['model']['subtree_width'] = subtree_width
     config['num_locations'] = args.num_locations
 
-    # Get settings from config
-    label_scale = config['data'].get('label_scale', 'log')
+    label_name = args.label
+    data_cfg = config['data']
 
-    # Setup
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
-    print(f"Device: {device}")
-    print(f"num_locations: {args.num_locations}")
-    print(f"subtree_width: {args.subtree_width}")
-
     set_seed(config['train']['random_seed'])
-
-    # Build graphs
-    print("\nBuilding graphs...")
-    subtree_width = config['model']['subtree_width']
-    all_graphs = build_all_graphs(args.input_dir, subtree_width, verbose=True)
-    print(f"  Total graphs: {len(all_graphs)}")
 
     # Validate num_locations
     for g, graph_id, locs, _ in all_graphs:
         if g.num_nodes() != args.num_locations:
             raise ValueError(
-                f"Graph {graph_id}: expected {args.num_locations} locations, got {g.num_nodes()}. "
-                f"Check your data or --num_locations value."
+                f"Graph {graph_id}: expected {args.num_locations} locations, got {g.num_nodes()}."
             )
-    print(f"  All graphs have {args.num_locations} locations ✓")
 
     # Train/val/test split
     train_ratio = config['train']['train_ratio']
@@ -189,44 +165,36 @@ def main():
         temp_graphs, test_size=0.5, random_state=config['train']['random_seed']
     )
 
-    print(f"  Train: {len(train_graphs)}, Val: {len(val_graphs)}, Test: {len(test_graphs)}")
+    # Summary
+    print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
+    print(f"Features: CBLV [0,1], Edge {data_cfg.get('edge_norm', 'zscore')}")
+    print(f"Label: {label_name} {data_cfg.get('label_norm', 'zscore')}")
 
-    # Apply label transform (log or linear)
-    print(f"  Label scale: {label_scale}")
-    if label_scale == 'log':
-        apply_label_transform(train_graphs, label_scale)
-        apply_label_transform(val_graphs, label_scale)
-        apply_label_transform(test_graphs, label_scale)
+    # Normalize features based on config
+    edge_norm = None
+    if data_cfg.get('edge_norm', 'zscore') == 'zscore':
+        edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
 
-    # Normalize edge features using training set statistics
-    edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
-    print(f"  Edge normalization: mean shape={edge_norm['mean'].shape}, std shape={edge_norm['std'].shape}")
-
-    # Normalize R0 labels using training set statistics
-    label_norm = normalize_labels(train_graphs, val_graphs, test_graphs)
-    label_norm['scale'] = label_scale
-    print(f"  R0 normalization: mean={label_norm['mean']:.4f}, std={label_norm['std']:.4f}")
+    label_norm = None
+    if data_cfg.get('label_norm', 'zscore') == 'zscore':
+        label_norm = normalize_labels(train_graphs, val_graphs, test_graphs, label_name)
 
     # Save normalization params
-    torch.save(edge_norm, output_dir / 'edge_norm.pt')
-    torch.save(label_norm, output_dir / 'label_norm.pt')
+    torch.save({'edge': edge_norm, 'label': label_norm, 'config': data_cfg},
+               output_dir / 'norm_params.pt')
 
-    # Extract just graphs for DataLoader
+    # Create DataLoaders
     train_g = [g for g, *_ in train_graphs]
     val_g = [g for g, *_ in val_graphs]
     test_g = [g for g, *_ in test_graphs]
-
-    # Create DataLoaders with batching
     batch_size = config['train']['batch_size']
     train_loader = GraphDataLoader(train_g, batch_size=batch_size, shuffle=True)
     val_loader = GraphDataLoader(val_g, batch_size=batch_size, shuffle=False)
     test_loader = GraphDataLoader(test_g, batch_size=batch_size, shuffle=False)
 
-    print(f"  Batch size: {batch_size}")
-
     # Create model
     model = CBLV_GAT(config['model']).to(device)
-    print(f"\nModel parameters: {count_parameters(model):,}")
+    print(f"Model: {count_parameters(model):,} parameters")
 
     # Training setup
     criterion = nn.MSELoss()
@@ -236,7 +204,7 @@ def main():
     patience = config['train']['early_stopping_patience']
 
     # Training loop
-    print("\nTraining...")
+    print("Training...")
     best_val_loss = float('inf')
     best_epoch = 0
     patience_counter = 0
@@ -245,14 +213,15 @@ def main():
     history = {'train_loss': [], 'val_loss': []}
 
     for epoch in range(num_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss, _, _ = evaluate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, label_name)
+        val_results = evaluate(model, val_loader, criterion, device, label_name)
+        val_loss = val_results['loss']
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
+            print(f"Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -263,36 +232,37 @@ def main():
             patience_counter += 1
 
         if patience_counter >= patience:
-            print(f"  Early stopping at epoch {epoch+1}")
+            print(f"Early stopping at epoch {epoch+1}")
             break
 
-    print(f"\nBest epoch: {best_epoch+1} (val_loss: {best_val_loss:.4f})")
+    print(f"Best epoch: {best_epoch+1} (val_loss={best_val_loss:.4f})")
 
-    # Load best model and evaluate on test set
+    # Evaluate on test set
     model.load_state_dict(best_state)
-    _, test_preds_norm, test_labels_norm = evaluate(model, test_loader, criterion, device)
+    test_results = evaluate(model, test_loader, criterion, device, label_name)
 
     # Denormalize predictions and labels
-    label_mean = label_norm['mean'].item()
-    label_std = label_norm['std'].item()
-    test_preds = test_preds_norm * label_std + label_mean
-    test_labels = test_labels_norm * label_std + label_mean
+    test_preds = test_results['preds']
+    test_labels = test_results['labels']
+    if label_norm is not None:
+        label_mean = label_norm['mean'].item()
+        label_std = label_norm['std'].item()
+        test_preds = test_preds * label_std + label_mean
+        test_labels = test_labels * label_std + label_mean
 
-    # If log scale was used, convert back to original scale
-    if label_scale == 'log':
-        test_preds = np.exp(test_preds)
-        test_labels = np.exp(test_labels)
+    # Compute metrics
+    r2 = r2_score(test_labels, test_preds)
+    mse = mean_squared_error(test_labels, test_preds)
+    print(f"Test: R2={r2:.4f}, MSE={mse:.4f}")
 
     # Save results
     torch.save(best_state, output_dir / 'best_model.pt')
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
     pd.DataFrame({
-        'true_R0': test_labels,
-        'pred_R0': test_preds
+        f'true_{label_name}': test_labels,
+        f'pred_{label_name}': test_preds,
     }).to_csv(output_dir / 'test_predictions.csv', index=False)
-
-    print(f"\nResults saved to: {output_dir}")
-    print("Done!")
+    print(f"Saved to: {output_dir}")
 
 
 if __name__ == '__main__':
