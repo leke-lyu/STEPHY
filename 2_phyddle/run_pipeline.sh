@@ -1,132 +1,71 @@
 #!/bin/bash
 #
-# Full Phyddle Pipeline for R0 Estimation
-# - Uses phyddle library for formatting, training, and estimation
-# - Includes auxiliary data and confidence prediction intervals (CPI)
+# Phyddle Pipeline for R0 and Source_Sink_Score Estimation
+#
+# Features:
+#   - Trains separate models for R0 and SSS
+#   - Format once, Train/Estimate separately (optimized)
+#   - Auto-detects num_locations and tree sizes
 #
 # Usage:
 #   bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
-#
-# Example:
-#   bash run_pipeline.sh /path/to/epidata/500_1_MM0.002 ./results
-#
 
-set -e  # Exit on error
-
-# Get the directory where this script is located (contains Python scripts and configs)
+set -e
+export PYTHONDONTWRITEBYTECODE=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check minimum arguments
 if [ "$#" -lt 2 ]; then
     echo "Usage: bash $0 inputfolder_0 [inputfolder_1 ...] outfolder"
-    echo "Example: bash $0 /path/to/epidata/500_1_MM0.002 /path/to/epidata/500_1_MM0.003 ./results"
     exit 1
 fi
 
-# Parse arguments: all but last are input folders, last is output folder
 ARGS=("$@")
 NUM_ARGS=${#ARGS[@]}
 OUT_FOLDER="${ARGS[$NUM_ARGS-1]}"
 INPUT_FOLDERS=("${ARGS[@]:0:$NUM_ARGS-1}")
 
 echo "=============================================="
-echo "Phyddle R0 Estimation Batch Pipeline"
+echo "Phyddle R0 + SSS Estimation Pipeline"
 echo "=============================================="
-echo "Script directory: $SCRIPT_DIR"
-echo "Output folder: $OUT_FOLDER"
-echo "Number of datasets: ${#INPUT_FOLDERS[@]}"
+echo "Output: $OUT_FOLDER"
+echo "Datasets: ${#INPUT_FOLDERS[@]}"
 echo ""
 
-# Create output folder if it doesn't exist
 mkdir -p "$OUT_FOLDER"
 
-# Process each input folder
-for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
-    echo ""
-    echo "=============================================="
-    echo "Processing: $INPUT_FOLDER"
-    echo "=============================================="
+# Generate param_est entries
+generate_param_est() {
+    local num_locs=$1 prefix=$2 result=""
+    for ((i=0; i<num_locs; i++)); do
+        result+="        '${prefix}_${i}': 'num',\n"
+    done
+    echo -e "$result"
+}
 
-    # Extract dataset name from input folder path
-    DATASET_NAME=$(basename "$INPUT_FOLDER")
-    WORK_DIR="$OUT_FOLDER/$DATASET_NAME"
-    SIM_DATA_DIR="$WORK_DIR/sim_data"
+generate_all_param_est() {
+    local num_locs=$1 result=""
+    for ((i=0; i<num_locs; i++)); do result+="        'R0_${i}': 'num',\n"; done
+    for ((i=0; i<num_locs; i++)); do result+="        'SSS_${i}': 'num',\n"; done
+    echo -e "$result"
+}
 
-    echo "Dataset name: $DATASET_NAME"
-    echo "Working directory: $WORK_DIR"
-    echo ""
-
-    # Create working directory structure
-    mkdir -p "$WORK_DIR"
-    mkdir -p "$SIM_DATA_DIR"
-
-    # ==========================================
-    # Step 1: Convert to phyddle format
-    # ==========================================
-    echo "[Step 1/4] Converting BEAST2 data to phyddle format..."
-    python3 "$SCRIPT_DIR/convert_to_phyddle.py" \
-        --input_dir "$INPUT_FOLDER" \
-        --output_dir "$SIM_DATA_DIR" \
-        --num_locations 16 \
-        --max_trees_per_sim 1
-
-    echo "Conversion complete."
-    echo ""
-
-    # ==========================================
-    # Step 2: Get tree sizes
-    # ==========================================
-    echo "[Step 2/4] Analyzing tree sizes..."
-
-    # Run tree_size.py and capture output
-    TREE_SIZE_OUTPUT=$(python3 "$SCRIPT_DIR/tree_size.py" "$SIM_DATA_DIR")
-    echo "$TREE_SIZE_OUTPUT"
-
-    # Parse min and max tree sizes from output
-    MIN_TAXA=$(echo "$TREE_SIZE_OUTPUT" | grep "^Min:" | awk '{print $2}')
-    MAX_TAXA=$(echo "$TREE_SIZE_OUTPUT" | grep "^Max:" | awk '{print $2}')
-
-    if [ -z "$MIN_TAXA" ] || [ -z "$MAX_TAXA" ]; then
-        echo "Error: Could not parse tree sizes from tree_size.py output"
-        echo "Skipping dataset: $DATASET_NAME"
-        continue
-    fi
-
-    echo "Min taxa: $MIN_TAXA"
-    echo "Max taxa: $MAX_TAXA"
-    echo ""
-
-    # ==========================================
-    # Step 3: Create modified config file
-    # ==========================================
-    echo "[Step 3/4] Creating config file with tree size parameters..."
-
-    # Create config.py for this dataset
-    cat > "$WORK_DIR/config.py" << EOF
-#!/usr/bin/env python3
-"""
-Phyddle config for R0 estimation.
-Auto-generated for dataset: $DATASET_NAME
-"""
-
+# Generate training config
+generate_train_config() {
+    local param_est=$1
+    cat << CONF
 args = {
-    # Workspace
-    'prefix'             : 'r0_est',
+    'prefix'             : 'all_labels',
     'sim_prefix'         : 'sim',
-    'sim_dir'            : './sim_data',
+    'sim_dir'            : '../sim_data',
     'fmt_dir'            : './format_output',
     'trn_dir'            : './train_output',
     'est_dir'            : './estimate_output',
-
-    # Analysis
     'use_parallel'       : 'T',
     'use_cuda'           : 'F',
     'num_proc'           : -1,
     'no_emp'             : 'T',
-
-    # Format
     'encode_all_sim'     : 'T',
-    'num_char'           : 16,
+    'num_char'           : $NUM_LOCATIONS,
     'num_states'         : 2,
     'min_num_taxa'       : $MIN_TAXA,
     'max_num_taxa'       : $MAX_TAXA,
@@ -136,31 +75,11 @@ args = {
     'char_encode'        : 'integer',
     'char_format'        : 'nexus',
     'tensor_format'      : 'hdf5',
-
-    # Parameters to estimate
     'param_est'          : {
-        'log_R0_0'  : 'num',
-        'log_R0_1'  : 'num',
-        'log_R0_2'  : 'num',
-        'log_R0_3'  : 'num',
-        'log_R0_4'  : 'num',
-        'log_R0_5'  : 'num',
-        'log_R0_6'  : 'num',
-        'log_R0_7'  : 'num',
-        'log_R0_8'  : 'num',
-        'log_R0_9'  : 'num',
-        'log_R0_10' : 'num',
-        'log_R0_11' : 'num',
-        'log_R0_12' : 'num',
-        'log_R0_13' : 'num',
-        'log_R0_14' : 'num',
-        'log_R0_15' : 'num',
-    },
+${param_est}    },
     'param_data'         : {},
-
-    # Train
-    'num_epochs'         : 300,
-    'num_early_stop'     : 15,
+    'num_epochs'         : 500,
+    'num_early_stop'     : 25,
     'trn_batch_size'     : 64,
     'prop_test'          : 0.2,
     'prop_val'           : 0.1,
@@ -171,9 +90,6 @@ args = {
     'optimizer'          : 'adam',
     'learning_rate'      : 0.001,
     'activation_func'    : 'relu',
-    'log_offset'         : 1.0,
-
-    # CNN architecture
     'phy_channel_plain'  : [32, 64, 128],
     'phy_channel_stride' : [32, 64],
     'phy_channel_dilate' : [32, 64],
@@ -184,37 +100,111 @@ args = {
     'phy_dilate_dilate'  : [3, 5],
     'aux_channel'        : [128, 64, 32],
     'lbl_channel'        : [128, 64, 32],
+    'verbose'            : 'T',
+}
+CONF
+}
 
+# Process each input folder
+for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
+    echo ""
+    echo "=============================================="
+    echo "Processing: $INPUT_FOLDER"
+    echo "=============================================="
+
+    DATASET_NAME=$(basename "$INPUT_FOLDER")
+    WORK_DIR="$OUT_FOLDER/$DATASET_NAME"
+    SIM_DATA_DIR="$WORK_DIR/sim_data"
+    FORMAT_DIR="$WORK_DIR/format_output"
+
+    mkdir -p "$WORK_DIR" "$SIM_DATA_DIR"
+
+    # Step 1: Convert to phyddle format
+    echo "[Step 1/5] Converting BEAST2 data..."
+    CONVERT_OUTPUT=$(python3 "$SCRIPT_DIR/convert_to_phyddle.py" \
+        --input_dir "$INPUT_FOLDER" \
+        --output_dir "$SIM_DATA_DIR" \
+        --max_trees_per_sim 1 2>&1)
+    echo "$CONVERT_OUTPUT"
+
+    NUM_LOCATIONS=$(echo "$CONVERT_OUTPUT" | grep "^PHYDDLE_PARAM num_locations" | awk '{print $3}')
+    MIN_TAXA=$(echo "$CONVERT_OUTPUT" | grep "^PHYDDLE_PARAM min_taxa" | awk '{print $3}')
+    MAX_TAXA=$(echo "$CONVERT_OUTPUT" | grep "^PHYDDLE_PARAM max_taxa" | awk '{print $3}')
+
+    if [ -z "$NUM_LOCATIONS" ] || [ -z "$MIN_TAXA" ] || [ -z "$MAX_TAXA" ]; then
+        echo "Error: Could not parse parameters. Skipping $DATASET_NAME"
+        continue
+    fi
+    echo "Parsed: num_locations=$NUM_LOCATIONS, min_taxa=$MIN_TAXA, max_taxa=$MAX_TAXA"
+
+    # Step 2: Format once
+    echo ""
+    echo "[Step 2/5] Formatting data..."
+    ALL_PARAM_EST=$(generate_all_param_est "$NUM_LOCATIONS")
+    cat > "$WORK_DIR/format_config.py" << EOF
+#!/usr/bin/env python3
+args = {
+    'prefix'             : 'all_labels',
+    'sim_prefix'         : 'sim',
+    'sim_dir'            : './sim_data',
+    'fmt_dir'            : './format_output',
+    'trn_dir'            : './train_output',
+    'est_dir'            : './estimate_output',
+    'use_parallel'       : 'T',
+    'use_cuda'           : 'F',
+    'num_proc'           : -1,
+    'no_emp'             : 'T',
+    'encode_all_sim'     : 'T',
+    'num_char'           : $NUM_LOCATIONS,
+    'num_states'         : 2,
+    'min_num_taxa'       : $MIN_TAXA,
+    'max_num_taxa'       : $MAX_TAXA,
+    'tree_width'         : $MAX_TAXA,
+    'tree_encode'        : 'serial',
+    'brlen_encode'       : 'height_brlen',
+    'char_encode'        : 'integer',
+    'char_format'        : 'nexus',
+    'tensor_format'      : 'hdf5',
+    'param_est'          : {
+$ALL_PARAM_EST    },
+    'param_data'         : {},
     'verbose'            : 'T',
 }
 EOF
+    cd "$WORK_DIR" && python3 -m phyddle -c format_config.py -s F && cd - > /dev/null
 
-    echo "Config file created."
+    # Step 3: Train R0 model
     echo ""
+    echo "[Step 3/5] Training R0 model..."
+    R0_DIR="$WORK_DIR/results_r0"
+    mkdir -p "$R0_DIR"
+    cp -r "$FORMAT_DIR" "$R0_DIR/format_output"
+    R0_PARAM_EST=$(generate_param_est "$NUM_LOCATIONS" "R0")
+    echo "#!/usr/bin/env python3" > "$R0_DIR/config.py"
+    generate_train_config "$R0_PARAM_EST" >> "$R0_DIR/config.py"
+    cd "$R0_DIR" && python3 -m phyddle -c config.py -s TE && cd - > /dev/null
 
-    # ==========================================
-    # Step 4: Run phyddle (Format, Train, Estimate)
-    # ==========================================
-    echo "[Step 4/4] Running phyddle (Format, Train, Estimate)..."
-
-    # Change to working directory and run phyddle
-    cd "$WORK_DIR"
-    python3 -m phyddle -c config.py -s FTE
-
-    echo "Phyddle complete."
-
-    # Return to original directory
-    cd - > /dev/null
-
-    echo "=============================================="
-    echo "Completed: $DATASET_NAME"
-    echo "Results saved to: $WORK_DIR"
-    echo "=============================================="
+    # Step 4: Train SSS model
     echo ""
+    echo "[Step 4/5] Training SSS model..."
+    SSS_DIR="$WORK_DIR/results_sss"
+    mkdir -p "$SSS_DIR"
+    cp -r "$FORMAT_DIR" "$SSS_DIR/format_output"
+    SSS_PARAM_EST=$(generate_param_est "$NUM_LOCATIONS" "SSS")
+    echo "#!/usr/bin/env python3" > "$SSS_DIR/config.py"
+    generate_train_config "$SSS_PARAM_EST" >> "$SSS_DIR/config.py"
+    cd "$SSS_DIR" && python3 -m phyddle -c config.py -s TE && cd - > /dev/null
+
+    # Step 5: Summary
+    echo ""
+    echo "[Step 5/5] Complete: $DATASET_NAME"
+    echo "  num_locations: $NUM_LOCATIONS, tree_width: $MAX_TAXA"
+    echo "  R0:  $R0_DIR"
+    echo "  SSS: $SSS_DIR"
 done
 
 echo ""
 echo "=============================================="
 echo "All datasets processed!"
+echo "Output: $OUT_FOLDER"
 echo "=============================================="
-echo "Output folder: $OUT_FOLDER"
