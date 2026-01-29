@@ -168,6 +168,7 @@ args = {
     'param_est'          : {
 $ALL_PARAM_EST    },
     'param_data'         : {},
+    'prop_test'          : 0.2,
     'verbose'            : 'T',
 }
 EOF
