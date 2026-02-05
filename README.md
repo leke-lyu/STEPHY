@@ -195,21 +195,6 @@ pip install torch dgl numpy pandas scipy numba dendropy tqdm
 | `numba` | JIT compilation for performance |
 | `tqdm` | Progress bars |
 
-### Note on DGL Installation
-
-DGL requires specific installation based on your CUDA version:
-
-```bash
-# CPU only
-pip install dgl
-
-# CUDA 11.x
-pip install dgl -f https://data.dgl.ai/wheels/cu11x/repo.html
-
-# CUDA 12.x
-pip install dgl -f https://data.dgl.ai/wheels/cu12x/repo.html
-```
-
 ## Key Features
 
 - **CBLV Encoding**: 4-channel compact representation of subtree topology
