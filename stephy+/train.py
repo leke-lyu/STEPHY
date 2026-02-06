@@ -27,7 +27,6 @@ def parse_args():
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
     parser.add_argument('--label', choices=['R0', 'Source_Sink_Score', 'Recovery_Rate', 'Ancestral_State'], required=True, help='Label to predict')
-    parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
     return parser.parse_args()
 
 
@@ -35,8 +34,6 @@ def set_seed(seed):
     """Set random seed for reproducibility."""
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
 
 
 def apply_epi_log_transform(graphs):
@@ -93,7 +90,7 @@ def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
     return {'mean': mean, 'std': std}
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, label_name, is_classification=False):
+def train_epoch(model, dataloader, optimizer, criterion, label_name, is_classification=False):
     """
     Train for one epoch.
 
@@ -108,7 +105,6 @@ def train_epoch(model, dataloader, optimizer, criterion, device, label_name, is_
     total_graphs = 0
 
     for batched_g in dataloader:
-        batched_g = batched_g.to(device)
         node_cblv = batched_g.ndata['cblv']
         edge_feat = batched_g.edata['feat']
 
@@ -136,7 +132,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, label_name, is_
     return total_loss / total_graphs
 
 
-def evaluate(model, dataloader, criterion, device, label_name, is_classification=False):
+def evaluate(model, dataloader, criterion, label_name, is_classification=False):
     """
     Evaluate model. Returns dict with 'loss', 'preds', and 'labels'.
 
@@ -151,7 +147,6 @@ def evaluate(model, dataloader, criterion, device, label_name, is_classification
 
     with torch.no_grad():
         for batched_g in dataloader:
-            batched_g = batched_g.to(device)
             node_cblv = batched_g.ndata['cblv']
             edge_feat = batched_g.edata['feat']
 
@@ -165,12 +160,12 @@ def evaluate(model, dataloader, criterion, device, label_name, is_classification
             if is_classification:
                 targets = per_graph_labels.argmax(dim=1)
                 loss = criterion(per_graph_preds, targets)
-                all_preds.extend(per_graph_preds.argmax(dim=1).cpu().numpy())
-                all_labels.extend(targets.cpu().numpy())
+                all_preds.extend(per_graph_preds.argmax(dim=1).numpy())
+                all_labels.extend(targets.numpy())
             else:
                 loss = criterion(per_graph_preds, per_graph_labels)
-                all_preds.extend(predictions.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
+                all_preds.extend(predictions.numpy())
+                all_labels.extend(labels.numpy())
 
             batch_size = len(num_nodes_list)
             total_loss += loss.item() * batch_size
@@ -201,7 +196,6 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
     set_seed(config['train']['random_seed'])
 
     # Validate num_locations
@@ -259,7 +253,7 @@ def main():
     test_loader = GraphDataLoader(test_g, batch_size=batch_size, shuffle=False)
 
     # Create model
-    model = CBLV_GAT(config['model']).to(device)
+    model = CBLV_GAT(config['model'])
     print(f"Model: {count_parameters(model):,} parameters")
 
     # Training setup
@@ -281,8 +275,8 @@ def main():
         history['val_accuracy'] = []
 
     for epoch in range(num_epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, label_name, is_classification)
-        val_results = evaluate(model, val_loader, criterion, device, label_name, is_classification)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, label_name, is_classification)
+        val_results = evaluate(model, val_loader, criterion, label_name, is_classification)
         val_loss = val_results['loss']
 
         history['train_loss'].append(train_loss)
@@ -314,7 +308,7 @@ def main():
 
     # Evaluate on test set
     model.load_state_dict(best_state)
-    test_results = evaluate(model, test_loader, criterion, device, label_name, is_classification)
+    test_results = evaluate(model, test_loader, criterion, label_name, is_classification)
 
     test_preds = test_results['preds']
     test_labels = test_results['labels']
