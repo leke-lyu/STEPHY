@@ -31,21 +31,21 @@ set -uo pipefail
 # ============================================================
 
 # Locations / populations
-NUM_LOCS=16
-POP_MIN=500
-POP_MAX=5000
+NUM_LOCS=10
+POP_MIN=1000
+POP_MAX=10000
 SHARED_POP_SIZE=false
 SEED_LOCATION="None"              # "None" = random, or 0..NUM_LOCS-1
 
 # R0 (basic reproduction number)
-R0_MIN=2
-R0_MAX=8
+R0_MIN=3.5
+R0_MAX=4
 SHARED_R0=false
-MAX_R0_DIFF=2
+MAX_R0_DIFF=0.5
 
 # Recovery rate (mu)
-MU_MIN=0.01
-MU_MAX=0.05
+MU_MIN=0.02
+MU_MAX=0.03
 SHARED_RECOVERY_RATE=false
 MAX_MU_DIFF=0.01
 
@@ -54,13 +54,13 @@ SAMPLE_MIN=0.0006
 SAMPLE_MAX=0.0006
 
 # Migration rate
-MIGRATION_MIN=0.0001
-MIGRATION_MAX=0.0023
+MIGRATION_MIN=0.0008
+MIGRATION_MAX=0.0008
 SHARED_MIGRATION_RATE=false
 
 # Simulation time
-SIM_TIME_MIN=6
-SIM_TIME_MAX=20
+SIM_TIME_MIN=16
+SIM_TIME_MAX=16
 TIME_UNITS="recovery_period"      # "recovery_period" or "arbitrary"
 
 # Misc
