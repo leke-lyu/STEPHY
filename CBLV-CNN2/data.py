@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for CBLV-CNN Baseline.
+Data Loading and Preprocessing for CBLV-CNN2 (CNN + Aux Branch baseline, no graph structure).
 
 Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
+Graphs are used for batching only; no edges or edge features are computed.
 """
 
-import re
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from collections import defaultdict
 from tqdm import tqdm
 
 import torch
 import dgl
 import dendropy as dp
-from scipy.stats import gaussian_kde
-from numba import jit
 
-from config import DATA_ARGS
-from beast2_parser import parse_trees, count_trees
+from beast2_parser import count_trees
 
 
 # ==============================================================================
@@ -42,7 +38,10 @@ def load_tree(tree_file, tree_idx=0):
 def get_location(node):
     """Extract location ID from node annotation (e.g., 'I{7}' -> 7)."""
     annot = node.annotations.get_value('type') if node.annotations else None
-    return int(str(annot).split('{')[1].split('}')[0]) if annot and '{' in str(annot) else None
+    if annot and '{' in str(annot):
+        annot_str = str(annot)
+        return int(annot_str.split('{')[1].split('}')[0])
+    return None
 
 
 def is_sample(node):
@@ -84,9 +83,9 @@ class VirtualSubtreeEncoder:
             else:
                 nd.loc_counts, nd.loc_max_dist = {}, {}
                 for child in nd.child_nodes():
-                    for loc, cnt in getattr(child, 'loc_counts', {}).items():
+                    for loc, cnt in child.loc_counts.items():
                         nd.loc_counts[loc] = nd.loc_counts.get(loc, 0) + cnt
-                    for loc, dist in getattr(child, 'loc_max_dist', {}).items():
+                    for loc, dist in child.loc_max_dist.items():
                         nd.loc_max_dist[loc] = max(nd.loc_max_dist.get(loc, 0), dist)
 
     def _find_mrca(self, loc):
@@ -149,19 +148,34 @@ class VirtualSubtreeEncoder:
 
     def encode_cblv(self, loc, subtree_width=None, rescale=True):
         """
-        Encode CBLV matrix for a target location.
+        Encode CBLV matrix and auxiliary statistics for a target location.
 
-        Returns: (heights, stem, n_tips)
+        Returns: (heights, aux_stats)
             heights: (subtree_width, 4) CBLV matrix, rescaled to [0,1]
-            stem: Distance from root to MRCA
-            n_tips: Number of tips at this location
+            aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips]
         """
         mrca = self._find_mrca(loc)
+        n_tips = self.phy.seed_node.loc_counts.get(loc, 0)
         if mrca is None:
-            return np.zeros((subtree_width or 1, 4)), 0, self.phy.seed_node.loc_counts.get(loc, 0)
+            return np.zeros((subtree_width or 1, 4)), [0.0, 0.0, 0.0, 0.0, float(n_tips)]
 
-        stem = mrca.root_distance
+        mrca_depth = mrca.root_distance
         n_tips = mrca.loc_counts.get(loc, 0)
+
+        # Compute avg path length from MRCA to each tip and collect tip sampling times
+        tip_dists = []
+        tip_times = []
+        for nd in mrca.leaf_iter():
+            if is_sample(nd) and get_location(nd) == loc:
+                tip_dists.append(nd.root_distance - mrca_depth)
+                tip_times.append(float(nd.annotations.get_value('time')))
+
+        aux_stats = [mrca_depth, min(tip_times), max(tip_times),
+                     float(np.mean(tip_dists)), float(n_tips)]
+
+        # Fill CBLV matrix from virtual in-order traversal.
+        # idx tracks the current leaf position; internal nodes advance idx.
+        # Columns: 0=leaf dist from branch, 1=internal depth, 2=leaf accum edge, 3=internal accum edge
         heights = np.zeros((n_tips, 4))
         idx = 0
 
@@ -169,12 +183,14 @@ class VirtualSubtreeEncoder:
             if idx >= n_tips:
                 break
             if event_type == 'leaf':
-                heights[idx, 0] = val1 + (stem if idx == 0 else 0)
-                heights[idx, 2] = val2
+                # First leaf gets absolute distance (includes mrca_depth); others get relative
+                heights[idx, 0] = val1 + (mrca_depth if idx == 0 else 0)
+                heights[idx, 2] = val2  # accumulated edge length to this leaf
             else:
+                # Internal node: store at next leaf's row, then advance position
                 if idx + 1 < n_tips:
-                    heights[idx + 1, 1] = val1
-                    heights[idx + 1, 3] = val2
+                    heights[idx + 1, 1] = val1  # internal node depth
+                    heights[idx + 1, 3] = val2  # accumulated edge length to internal node
                 idx += 1
 
         if rescale:
@@ -186,133 +202,12 @@ class VirtualSubtreeEncoder:
             padded[:min(n_tips, subtree_width)] = heights[:min(n_tips, subtree_width)]
             heights = padded
 
-        return heights, stem, n_tips
+        return heights, aux_stats
 
     def get_all_locations(self):
         """Get sorted list of all sample locations in the tree."""
         return sorted({get_location(nd) for nd in self.phy.leaf_node_iter()
                       if is_sample(nd) and get_location(nd) is not None})
-
-
-# ==============================================================================
-# DTW Edge Features
-# ==============================================================================
-
-def extract_tip_times(tree_file, tree_idx=0):
-    """Extract tip sampling times grouped by location from BEAST2 tree file."""
-    with open(tree_file) as f:
-        trees = parse_trees(f.read())
-    if not trees or tree_idx >= len(trees):
-        return {}
-
-    tips = defaultdict(list)
-    for loc, time in re.findall(r'\d+\[&type="I\{(\d+)\}",samp="sample",time=([\d.]+)\]', trees[tree_idx]):
-        tips[int(loc)].append(float(time))
-    return dict(tips)
-
-
-def tips_to_curves(tips_by_loc, num_points=None):
-    """Convert tip times to KDE-smoothed epidemic curves."""
-    if num_points is None:
-        num_points = DATA_ARGS['dtw_num_points']
-    all_times = [t for times in tips_by_loc.values() for t in times]
-    if not all_times:
-        return {}, 0
-
-    t_grid = np.linspace(min(all_times), max(all_times), num_points)
-    dt = (max(all_times) - min(all_times)) / (num_points - 1)
-
-    curves = {}
-    for loc, times in tips_by_loc.items():
-        curves[loc] = gaussian_kde(times)(t_grid) * len(times) if len(times) >= 2 else np.zeros(num_points)
-    return curves, dt
-
-
-@jit(nopython=True, cache=True)
-def _dtw_forward(curve_a, curve_b):
-    """Numba-optimized DTW forward pass. Returns DTW matrix."""
-    n, m = len(curve_a), len(curve_b)
-    dtw = np.full((n + 1, m + 1), np.inf)
-    dtw[0, 0] = 0.0
-
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            cost = (curve_a[i-1] - curve_b[j-1]) ** 2
-            dtw[i, j] = cost + min(dtw[i-1, j-1], dtw[i-1, j], dtw[i, j-1])
-
-    return dtw
-
-
-@jit(nopython=True, cache=True)
-def _dtw_backtrack(dtw):
-    """Numba-optimized DTW backtrack. Returns lag mean and std."""
-    n, m = dtw.shape[0] - 1, dtw.shape[1] - 1
-    i, j = n, m
-    lag_sum = 0.0
-    lag_sq_sum = 0.0
-    count = 0
-
-    while i > 0 and j > 0:
-        lag = j - i
-        lag_sum += lag
-        lag_sq_sum += lag * lag
-        count += 1
-
-        # Find min of three neighbors
-        diag = dtw[i-1, j-1]
-        up = dtw[i-1, j]
-        left = dtw[i, j-1]
-
-        if diag <= up and diag <= left:
-            i, j = i - 1, j - 1
-        elif up <= left:
-            i, j = i - 1, j
-        else:
-            i, j = i, j - 1
-
-    if count == 0:
-        return 0.0, 0.0
-
-    mean = lag_sum / count
-    variance = (lag_sq_sum / count) - (mean * mean)
-    std = np.sqrt(max(variance, 0.0))
-
-    return mean, std
-
-
-def dtw_with_lag(curve_a, curve_b):
-    """
-    Compute DTW distance and lag statistics between two curves.
-    Uses numba JIT compilation for ~50-100x speedup.
-    """
-    dtw = _dtw_forward(curve_a, curve_b)
-    lag_mean, lag_std = _dtw_backtrack(dtw)
-    return dtw[-1, -1], lag_mean, lag_std
-
-
-def compute_dtw_edge_features(tree_file, tree_idx=0):
-    """Compute DTW-based edge features for all location pairs."""
-    tips_by_loc = extract_tip_times(tree_file, tree_idx)
-    if not tips_by_loc:
-        return None, None, None, []
-
-    curves, dt = tips_to_curves(tips_by_loc)
-    if not curves:
-        return None, None, None, []
-
-    locations = sorted(curves.keys())
-    curve_arr = np.array([curves[loc] for loc in locations])
-
-    src, dst, feats = [], [], []
-    for i in range(len(locations)):
-        for j in range(len(locations)):
-            if i != j:
-                dist, lag_mean, lag_std = dtw_with_lag(curve_arr[i], curve_arr[j])
-                src.append(i)
-                dst.append(j)
-                feats.append([dist, lag_mean * dt, lag_std * dt])
-
-    return src, dst, np.array(feats), locations
 
 
 # ==============================================================================
@@ -360,10 +255,10 @@ def load_labels(input_folder, file_prefix, num_nodes):
 
 def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     """
-    Build a single DGL graph from a tree.
+    Build a single DGL graph from a tree (nodes only, no edges).
 
     Returns:
-        g: DGL graph with node/edge features
+        g: DGL graph with node features (no edges)
         locations: List of location IDs
         tree_height: Height of the tree
     """
@@ -377,32 +272,29 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
 
     # CBLV shape: (n_nodes, subtree_width, 4) -> transpose to (n_nodes, 4, subtree_width)
     node_cblv = np.zeros((n_nodes, subtree_width, 4))
+    node_aux = np.zeros((n_nodes, 5))
 
     for i, loc in enumerate(locations):
-        cblv, _, _ = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
+        cblv, aux_stats = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
         node_cblv[i] = cblv
+        node_aux[i] = aux_stats
 
     # Transpose to (n_nodes, 4, subtree_width) for Conv1d
     node_cblv = np.transpose(node_cblv, (0, 2, 1))
-
-    # Edge features (DTW)
-    src, dst, edge_feats, dtw_locs = compute_dtw_edge_features(tree_file, tree_idx)
-    if locations != dtw_locs:
-        raise ValueError(f"Location mismatch: CBLV={locations}, DTW={dtw_locs}")
 
     # Load labels from preprocessed CSV
     file_prefix = Path(tree_file).stem.replace('_beast2', '')
     labels = load_labels(input_folder, file_prefix, n_nodes)
 
-    # Construct graph
-    g = dgl.graph((src, dst), num_nodes=n_nodes)
+    # Construct graph (nodes only, no edges — used for batching)
+    g = dgl.graph(([], []), num_nodes=n_nodes)
     g.ndata['cblv'] = torch.tensor(node_cblv, dtype=torch.float32)
+    g.ndata['aux'] = torch.tensor(node_aux, dtype=torch.float32)
     g.ndata['location'] = torch.tensor(locations, dtype=torch.long)
     g.ndata['R0'] = torch.tensor(labels['R0'], dtype=torch.float32)
     g.ndata['Source_Sink_Score'] = torch.tensor(labels['Source_Sink_Score'], dtype=torch.float32)
     g.ndata['Recovery_Rate'] = torch.tensor(labels['Recovery_Rate'], dtype=torch.float32)
     g.ndata['Ancestral_State'] = torch.tensor(labels['Ancestral_State'], dtype=torch.float32)
-    g.edata['feat'] = torch.tensor(edge_feats, dtype=torch.float32)
 
     return g, locations, tree_height
 

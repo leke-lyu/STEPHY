@@ -51,7 +51,7 @@ MAX_MU_DIFF=0.01
 
 # Sampling rate (shared across all locations)
 SAMPLE_MIN=0.00001
-SAMPLE_MAX=0.00011
+SAMPLE_MAX=0.00023
 
 # Migration rate
 MIGRATION_MIN=0.0001

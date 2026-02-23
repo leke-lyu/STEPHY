@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """
-CBLV-CNN Baseline Model: CNN-only (No Graph Structure).
+CBLV-CNN2 Model: CNN + Aux Branch baseline (no graph structure).
 
-Uses phylogenetic (CBLV encoder) features only, without graph attention.
-Baseline for evaluating whether graph structure helps prediction.
+Node embedding: 192-dim CNN (96+48+48) + 64-dim aux branch = 256-dim.
+Ablation of stephy2: same CBLV encoder and aux branch, but no GAT layer.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+_ACTIVATIONS = {'relu': F.relu}
+
+
+def _kaiming_init(module):
+    """Apply Kaiming initialization to Conv1d and Linear layers."""
+    for m in module.modules():
+        if isinstance(m, (nn.Conv1d, nn.Linear)):
+            nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
 
 class CBLVConvEncoder(nn.Module):
@@ -21,7 +32,7 @@ class CBLVConvEncoder(nn.Module):
     - Dilate: Long-range dependencies with dilated convolutions
 
     Input: (batch, 4, subtree_width) - CBLV features per node
-    Output: (batch, 256) - Phylogenetic embedding
+    Output: (batch, 192) - Phylogenetic embedding (96+48+48)
     """
 
     def __init__(self, args):
@@ -40,10 +51,9 @@ class CBLVConvEncoder(nn.Module):
         phy_dilate_dilate = list(args['phy_dilate_dilate'])
 
         # Activation function
-        act_name = args['activation_func']
-        self.act_fn = {'relu': F.relu, 'leaky_relu': F.leaky_relu, 'elu': F.elu}.get(act_name, F.relu)
+        self.act_fn = _ACTIVATIONS.get(args['activation_func'], F.relu)
 
-        # Plain branch: [32, 64, 128], kernels [3, 5, 7]
+        # Plain branch: [24, 48, 96], kernels [3, 5, 7]
         self.plain_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel in zip(phy_channel_plain, phy_kernel_plain):
@@ -51,7 +61,7 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.plain_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Stride branch: [32, 64], kernels [7, 9], strides [3, 6]
+        # Stride branch: [24, 48], kernels [7, 9], strides [3, 6]
         self.stride_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel, stride in zip(phy_channel_stride,
@@ -61,7 +71,7 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.stride_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Dilate branch: [32, 64], kernels [3, 5], dilations [3, 5]
+        # Dilate branch: [24, 48], kernels [3, 5], dilations [3, 5]
         self.dilate_convs = nn.ModuleList()
         in_ch = input_channels
         for out_ch, kernel, dilation in zip(phy_channel_dilate,
@@ -72,20 +82,18 @@ class CBLVConvEncoder(nn.Module):
             in_ch = out_ch
         self.dilate_pool = nn.AdaptiveAvgPool1d(1)
 
-        # Output dimension: 128 + 64 + 64 = 256
+        # Output dimension: 96 + 48 + 48 = 192
         self.output_dim = (phy_channel_plain[-1] +
                           phy_channel_stride[-1] +
                           phy_channel_dilate[-1])
 
-        self._init_weights()
+        _kaiming_init(self)
 
-    def _init_weights(self):
-        """Initialize weights using Kaiming initialization."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv1d):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+    def _forward_branch(self, x, convs, pool):
+        """Run a conv-pool branch: apply convolutions with activation, then pool."""
+        for conv in convs:
+            x = self.act_fn(conv(x))
+        return pool(x).squeeze(-1)
 
     def forward(self, x):
         """
@@ -95,39 +103,55 @@ class CBLVConvEncoder(nn.Module):
             x: (batch, 4, subtree_width) CBLV features
 
         Returns:
-            (batch, 256) node embeddings
+            (batch, 192) node embeddings
         """
-        # Plain branch
-        x_plain = x
-        for conv in self.plain_convs:
-            x_plain = self.act_fn(conv(x_plain))
-        x_plain = self.plain_pool(x_plain).squeeze(-1)
+        x_plain = self._forward_branch(x, self.plain_convs, self.plain_pool)
+        x_stride = self._forward_branch(x, self.stride_convs, self.stride_pool)
+        x_dilate = self._forward_branch(x, self.dilate_convs, self.dilate_pool)
 
-        # Stride branch
-        x_stride = x
-        for conv in self.stride_convs:
-            x_stride = self.act_fn(conv(x_stride))
-        x_stride = self.stride_pool(x_stride).squeeze(-1)
-
-        # Dilate branch
-        x_dilate = x
-        for conv in self.dilate_convs:
-            x_dilate = self.act_fn(conv(x_dilate))
-        x_dilate = self.dilate_pool(x_dilate).squeeze(-1)
-
-        # Concatenate: 128 + 64 + 64 = 256
+        # Concatenate: 96 + 48 + 48 = 192
         return torch.cat([x_plain, x_stride, x_dilate], dim=1)
+
+
+class AuxBranch(nn.Module):
+    """Dense branch for auxiliary tree statistics.
+
+    Features: mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips.
+
+    Input: (batch, 5)
+    Output: (batch, aux_output)
+    """
+
+    def __init__(self, args):
+        super().__init__()
+        aux_hidden = args['aux_hidden']
+        aux_output = args['aux_output']
+        self.fc = nn.Sequential(
+            nn.Linear(5, aux_hidden),
+            nn.ReLU(),
+            nn.Linear(aux_hidden, aux_output),
+            nn.ReLU(),
+        )
+        self.output_dim = aux_output
+        _kaiming_init(self)
+
+    def forward(self, x):
+        """Forward pass: (batch, 5) auxiliary stats -> (batch, aux_output)."""
+        return self.fc(x)
 
 
 class CBLV_CNN(nn.Module):
     """
-    CBLV-CNN: CNN encoder + MLP for single-task prediction (no graph structure).
+    CBLV-CNN2: CNN encoder + aux branch for single-task prediction (no graph).
+
+    Ablation of CBLV_GAT: removes the graph attention layer.
+    Each node is predicted independently from its own features.
 
     Architecture:
-    1. CNN encoder processes each node's CBLV independently -> 256-dim
-    2. Classifier predicts target label per node
-
-    Baseline for evaluating whether graph structure (GAT) helps prediction.
+    1. CNN encoder processes each node's CBLV independently -> 192-dim
+    2. Aux branch processes tree statistics -> 64-dim
+    3. Concat CNN + aux -> 256-dim node embedding
+    4. Classifier predicts target label per node
 
     Args:
         args: Config dict with model parameters
@@ -138,45 +162,44 @@ class CBLV_CNN(nn.Module):
 
         # CNN encoder for CBLV features
         self.cnn_encoder = CBLVConvEncoder(args)
-        cnn_output_dim = self.cnn_encoder.output_dim  # 256
+        cnn_output_dim = self.cnn_encoder.output_dim  # 192
+
+        # Aux branch for tree statistics
+        self.aux_branch = AuxBranch(args)
+        node_dim = cnn_output_dim + self.aux_branch.output_dim
 
         lbl_channel = list(args['lbl_channel'])
 
         # Classifier: 256 -> 128 -> 64 -> 32 -> 1
         self.classifier = nn.ModuleList()
-        in_features = cnn_output_dim
+        in_features = node_dim
         for out_features in lbl_channel:
             self.classifier.append(nn.Linear(in_features, out_features))
             in_features = out_features
         self.classifier.append(nn.Linear(in_features, 1))
 
         # Activation
-        act_name = args['activation_func']
-        self.act_fn = {'relu': F.relu, 'leaky_relu': F.leaky_relu, 'elu': F.elu}.get(act_name, F.relu)
+        self.act_fn = _ACTIVATIONS.get(args['activation_func'], F.relu)
 
-        self._init_classifier_weights()
+        _kaiming_init(self.classifier)
 
-    def _init_classifier_weights(self):
-        for m in self.classifier:
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(self, node_cblv):
+    def forward(self, node_cblv, node_aux):
         """
         Forward pass.
 
         Args:
             node_cblv: (N, 4, subtree_width) CBLV features per node
+            node_aux: (N, 5) auxiliary tree statistics per node
 
         Returns:
             (N,) predictions per node
         """
         # CNN encode each node's CBLV
-        h = self.cnn_encoder(node_cblv)  # (N, 256)
+        h_cnn = self.cnn_encoder(node_cblv)  # (N, 192)
+        h_aux = self.aux_branch(node_aux)    # (N, 64)
+        h = torch.cat([h_cnn, h_aux], dim=1) # (N, 256)
 
-        # Classifier
+        # Classifier (no graph attention)
         for layer in self.classifier[:-1]:
             h = self.act_fn(layer(h))
         out = self.classifier[-1](h).squeeze(-1)  # (N,)

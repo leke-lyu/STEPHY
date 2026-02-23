@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# CBLV-CNN Baseline Pipeline: CNN-only (No Graph Structure)
+# STEPHY Pipeline: Phylogeny-only Model
 # Usage: bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
 
 set -e
@@ -17,7 +17,7 @@ NUM_ARGS=${#ARGS[@]}
 OUT_FOLDER="${ARGS[$NUM_ARGS-1]}"
 INPUT_FOLDERS=("${ARGS[@]:0:$NUM_ARGS-1}")
 
-echo "=== CBLV-CNN ==="
+echo "=== STEPHY ==="
 echo "Output: $OUT_FOLDER"
 echo ""
 
@@ -49,37 +49,18 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
         --subtree_width "$SUBTREE_WIDTH" \
         --output "$GRAPHS_FILE"
 
-    # Step 3: Train R0
-    echo "  Training R0..."
-    python3 "$SCRIPT_DIR/train.py" \
-        --graphs "$GRAPHS_FILE" \
-        --num_locations "$NUM_LOCATIONS" \
-        --label R0 \
-        --output_dir "$WORK_DIR/results_r0"
-
-    # Step 4: Train Source_Sink_Score
-    echo "  Training Source_Sink_Score..."
-    python3 "$SCRIPT_DIR/train.py" \
-        --graphs "$GRAPHS_FILE" \
-        --num_locations "$NUM_LOCATIONS" \
-        --label Source_Sink_Score \
-        --output_dir "$WORK_DIR/results_sss"
-
-    # Step 5: Train Recovery_Rate
-    echo "  Training Recovery_Rate..."
-    python3 "$SCRIPT_DIR/train.py" \
-        --graphs "$GRAPHS_FILE" \
-        --num_locations "$NUM_LOCATIONS" \
-        --label Recovery_Rate \
-        --output_dir "$WORK_DIR/results_rr"
-
-    # Step 6: Train Ancestral_State (classification)
-    echo "  Training Ancestral_State..."
-    python3 "$SCRIPT_DIR/train.py" \
-        --graphs "$GRAPHS_FILE" \
-        --num_locations "$NUM_LOCATIONS" \
-        --label Ancestral_State \
-        --output_dir "$WORK_DIR/results_as"
+    # Step 3: Train all labels (label:output_dir pairs)
+    for LABEL_PAIR in R0:results_r0 Recovery_Rate:results_rr \
+                      Source_Sink_Score:results_sss Ancestral_State:results_as; do
+        LABEL="${LABEL_PAIR%%:*}"
+        OUT_SUBDIR="${LABEL_PAIR##*:}"
+        echo "  Training $LABEL..."
+        python3 "$SCRIPT_DIR/train.py" \
+            --graphs "$GRAPHS_FILE" \
+            --num_locations "$NUM_LOCATIONS" \
+            --label "$LABEL" \
+            --output_dir "$WORK_DIR/$OUT_SUBDIR"
+    done
 
     echo "  Done: $WORK_DIR"
     echo ""

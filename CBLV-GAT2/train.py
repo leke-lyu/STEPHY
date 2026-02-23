@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Training script for CBLV-CNN Baseline (No Graph Structure).
+Training script for CBLV-GAT2 (Standard GAT, No Edge Features).
 
 Requires precomputed graphs from build_graphs.py.
 """
@@ -15,14 +15,15 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
+import dgl
 from dgl.dataloading import GraphDataLoader
 
-from model import CBLV_CNN, count_parameters
+from model import CBLV_GAT, count_parameters
 from config import get_config
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='CBLV-CNN: Train with phylogeny data (no graph structure)')
+    parser = argparse.ArgumentParser(description='CBLV-GAT2: Train with standard GAT')
     parser.add_argument('--graphs', required=True, help='Precomputed graphs file (from build_graphs.py)')
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
@@ -34,6 +35,23 @@ def set_seed(seed):
     """Set random seed for reproducibility."""
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def normalize_aux_features(train_graphs, val_graphs, test_graphs):
+    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats)."""
+    train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)
+
+    # Log transform (clamp to avoid log(0))
+    train_aux = torch.log(train_aux.clamp(min=1e-8))
+    mean = train_aux.mean(dim=0)
+    std = train_aux.std(dim=0)
+    std = torch.where(std < 1e-8, torch.ones_like(std), std)
+
+    for graph_list in [train_graphs, val_graphs, test_graphs]:
+        for g, *_ in graph_list:
+            g.ndata['aux'] = (torch.log(g.ndata['aux'].clamp(min=1e-8)) - mean) / std
+
+    return {'mean': mean, 'std': std}
 
 
 def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
@@ -52,6 +70,21 @@ def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
     return {'mean': mean, 'std': std}
 
 
+def _forward_batch(model, batched_g, label_name):
+    """Run model forward and reshape predictions/labels to per-graph (batch, N)."""
+    node_cblv = batched_g.ndata['cblv']
+    node_aux = batched_g.ndata['aux']
+
+    predictions = model(batched_g, node_cblv, node_aux)
+    labels = batched_g.ndata[label_name]
+
+    num_nodes_list = batched_g.batch_num_nodes().tolist()
+    per_graph_preds = torch.stack(predictions.split(num_nodes_list))
+    per_graph_labels = torch.stack(labels.split(num_nodes_list))
+
+    return predictions, labels, per_graph_preds, per_graph_labels
+
+
 def train_epoch(model, dataloader, optimizer, criterion, label_name, is_classification=False):
     """
     Train for one epoch.
@@ -67,26 +100,18 @@ def train_epoch(model, dataloader, optimizer, criterion, label_name, is_classifi
     total_graphs = 0
 
     for batched_g in dataloader:
-        node_cblv = batched_g.ndata['cblv']
-
         optimizer.zero_grad()
-        predictions = model(node_cblv)
-        labels = batched_g.ndata[label_name]
-
-        num_nodes_list = batched_g.batch_num_nodes().tolist()
-        per_graph_preds = torch.stack(predictions.split(num_nodes_list))
-        per_graph_labels = torch.stack(labels.split(num_nodes_list))
+        _, _, per_graph_preds, per_graph_labels = _forward_batch(model, batched_g, label_name)
 
         if is_classification:
-            targets = per_graph_labels.argmax(dim=1)
-            loss = criterion(per_graph_preds, targets)
+            loss = criterion(per_graph_preds, per_graph_labels.argmax(dim=1))
         else:
             loss = criterion(per_graph_preds, per_graph_labels)
 
         loss.backward()
         optimizer.step()
 
-        batch_size = len(num_nodes_list)
+        batch_size = per_graph_preds.shape[0]
         total_loss += loss.item() * batch_size
         total_graphs += batch_size
 
@@ -108,14 +133,7 @@ def evaluate(model, dataloader, criterion, label_name, is_classification=False):
 
     with torch.no_grad():
         for batched_g in dataloader:
-            node_cblv = batched_g.ndata['cblv']
-
-            predictions = model(node_cblv)
-            labels = batched_g.ndata[label_name]
-
-            num_nodes_list = batched_g.batch_num_nodes().tolist()
-            per_graph_preds = torch.stack(predictions.split(num_nodes_list))
-            per_graph_labels = torch.stack(labels.split(num_nodes_list))
+            predictions, labels, per_graph_preds, per_graph_labels = _forward_batch(model, batched_g, label_name)
 
             if is_classification:
                 targets = per_graph_labels.argmax(dim=1)
@@ -127,7 +145,7 @@ def evaluate(model, dataloader, criterion, label_name, is_classification=False):
                 all_preds.extend(predictions.numpy())
                 all_labels.extend(labels.numpy())
 
-            batch_size = len(num_nodes_list)
+            batch_size = per_graph_preds.shape[0]
             total_loss += loss.item() * batch_size
             total_graphs += batch_size
 
@@ -144,6 +162,8 @@ def main():
 
     # Load graphs
     all_graphs = torch.load(args.graphs, weights_only=False)
+    # Ensure self-loops exist (allows reusing graphs.pt from stephy2)
+    all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 
     config['model']['subtree_width'] = subtree_width
@@ -151,7 +171,6 @@ def main():
 
     label_name = args.label
     is_classification = (label_name == 'Ancestral_State')
-    data_cfg = config['data']
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -176,17 +195,21 @@ def main():
 
     # Summary
     task_type = 'classification' if is_classification else 'regression'
+    label_info = f"{label_name}({task_type})" if is_classification else f"{label_name}({task_type}) zscore"
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
-    print(f"Features: CBLV [0,1] (no edge features)")
-    print(f"Label: {label_name} ({task_type})")
+    print(f"Features: CBLV(4ch) rescale[0,1]")
+    print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
+    print(f"Label: {label_info}")
 
-    # Normalize labels (no edge normalization for this model)
+    # Normalize: aux -> label (no edge features)
+    aux_norm = normalize_aux_features(train_graphs, val_graphs, test_graphs)
+
     label_norm = None
-    if not is_classification and data_cfg.get('label_norm', 'zscore') == 'zscore':
+    if not is_classification:
         label_norm = normalize_labels(train_graphs, val_graphs, test_graphs, label_name)
 
     # Save normalization params
-    torch.save({'edge': None, 'label': label_norm, 'config': data_cfg},
+    torch.save({'aux': aux_norm, 'label': label_norm},
                output_dir / 'norm_params.pt')
 
     # Create DataLoaders
@@ -199,7 +222,7 @@ def main():
     test_loader = GraphDataLoader(test_g, batch_size=batch_size, shuffle=False)
 
     # Create model
-    model = CBLV_CNN(config['model'])
+    model = CBLV_GAT(config['model'])
     print(f"Model: {count_parameters(model):,} parameters")
 
     # Training setup
@@ -259,18 +282,25 @@ def main():
     test_preds = test_results['preds']
     test_labels = test_results['labels']
 
-    # Compute metrics and build prediction DataFrame
+    pred_df = _print_metrics(test_preds, test_labels, is_classification, label_name,
+                              label_norm, args.num_locations)
+    _save_results(output_dir, best_state, history, pred_df)
+
+
+def _print_metrics(test_preds, test_labels, is_classification, label_name,
+                   label_norm, num_locations):
+    """Print test metrics and return prediction DataFrame."""
     if is_classification:
         acc = accuracy_score(test_labels, test_preds)
         print(f"Test: Accuracy={acc:.4f}")
 
-        for c in range(args.num_locations):
+        for c in range(num_locations):
             mask = test_labels == c
             if mask.sum() > 0:
                 class_acc = (test_preds[mask] == c).mean()
                 print(f"  Class {c}: {mask.sum()} samples, accuracy={class_acc:.4f}")
 
-        pred_df = pd.DataFrame({
+        return pd.DataFrame({
             'true_ancestor': test_labels.astype(int),
             'pred_ancestor': test_preds.astype(int),
         })
@@ -285,12 +315,14 @@ def main():
         mse = mean_squared_error(test_labels, test_preds)
         print(f"Test: R2={r2:.4f}, MSE={mse:.4f}")
 
-        pred_df = pd.DataFrame({
+        return pd.DataFrame({
             f'true_{label_name}': test_labels,
             f'pred_{label_name}': test_preds,
         })
 
-    # Save results
+
+def _save_results(output_dir, best_state, history, pred_df):
+    """Save model, training history, and predictions."""
     torch.save(best_state, output_dir / 'best_model.pt')
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
     pred_df.to_csv(output_dir / 'test_predictions.csv', index=False)

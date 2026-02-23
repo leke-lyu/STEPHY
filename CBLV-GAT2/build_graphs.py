@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and save DGL graphs for CBLV-CNN."""
+"""Build and save DGL graphs for CBLV-GAT2."""
 
 import argparse
 from pathlib import Path
@@ -8,7 +8,7 @@ from data import build_all_graphs
 
 
 def main():
-    parser = argparse.ArgumentParser(description='CBLV-CNN: Build graphs')
+    parser = argparse.ArgumentParser(description='CBLV-GAT2: Build graphs')
     parser.add_argument('--input_dir', required=True, help='Input data directory')
     parser.add_argument('--output', required=True, help='Output file (e.g., graphs.pt)')
     parser.add_argument('--subtree_width', type=int, required=True, help='Max tips per location')

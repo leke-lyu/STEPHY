@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-STEPHY+ Model: CBLV-GAT with Phylogenetic + Epidemiological Features.
+STEPHY2 Model: CBLV-GAT with Phylogenetic Features + Aux Branch.
 
-Uses phylogenetic (CBLV encoder) and epidemiological (dense branch) features
-with GAT for spatial aggregation.
+Node embedding: 96-dim CNN (48+24+24) + 32-dim aux branch = 128-dim.
 """
 
 import torch
@@ -11,6 +10,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl
 import dgl.function as fn
+
+_ACTIVATIONS = {'relu': F.relu}
+
+
+def _kaiming_init(module):
+    """Apply Kaiming initialization to Conv1d and Linear layers."""
+    for m in module.modules():
+        if isinstance(m, (nn.Conv1d, nn.Linear)):
+            nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
 
 class CBLVConvEncoder(nn.Module):
@@ -23,7 +33,7 @@ class CBLVConvEncoder(nn.Module):
     - Dilate: Long-range dependencies with dilated convolutions
 
     Input: (batch, 4, subtree_width) - CBLV features per node
-    Output: (batch, 96) - Phylogenetic embedding
+    Output: (batch, 96) - Phylogenetic embedding (48+24+24)
     """
 
     def __init__(self, args):
@@ -42,8 +52,7 @@ class CBLVConvEncoder(nn.Module):
         phy_dilate_dilate = list(args['phy_dilate_dilate'])
 
         # Activation function
-        act_name = args['activation_func']
-        self.act_fn = {'relu': F.relu, 'leaky_relu': F.leaky_relu, 'elu': F.elu}.get(act_name, F.relu)
+        self.act_fn = _ACTIVATIONS.get(args['activation_func'], F.relu)
 
         # Plain branch: [12, 24, 48], kernels [3, 5, 7]
         self.plain_convs = nn.ModuleList()
@@ -79,15 +88,13 @@ class CBLVConvEncoder(nn.Module):
                           phy_channel_stride[-1] +
                           phy_channel_dilate[-1])
 
-        self._init_weights()
+        _kaiming_init(self)
 
-    def _init_weights(self):
-        """Initialize weights using Kaiming initialization."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv1d):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+    def _forward_branch(self, x, convs, pool):
+        """Run a conv-pool branch: apply convolutions with activation, then pool."""
+        for conv in convs:
+            x = self.act_fn(conv(x))
+        return pool(x).squeeze(-1)
 
     def forward(self, x):
         """
@@ -99,70 +106,12 @@ class CBLVConvEncoder(nn.Module):
         Returns:
             (batch, 96) node embeddings
         """
-        # Plain branch
-        x_plain = x
-        for conv in self.plain_convs:
-            x_plain = self.act_fn(conv(x_plain))
-        x_plain = self.plain_pool(x_plain).squeeze(-1)
-
-        # Stride branch
-        x_stride = x
-        for conv in self.stride_convs:
-            x_stride = self.act_fn(conv(x_stride))
-        x_stride = self.stride_pool(x_stride).squeeze(-1)
-
-        # Dilate branch
-        x_dilate = x
-        for conv in self.dilate_convs:
-            x_dilate = self.act_fn(conv(x_dilate))
-        x_dilate = self.dilate_pool(x_dilate).squeeze(-1)
+        x_plain = self._forward_branch(x, self.plain_convs, self.plain_pool)
+        x_stride = self._forward_branch(x, self.stride_convs, self.stride_pool)
+        x_dilate = self._forward_branch(x, self.dilate_convs, self.dilate_pool)
 
         # Concatenate: 48 + 24 + 24 = 96
         return torch.cat([x_plain, x_stride, x_dilate], dim=1)
-
-
-class EpiBranch(nn.Module):
-    """
-    Dense network for epidemiological features.
-
-    Input: (batch, epi_dim) - raw epi features per node
-    Output: (batch, epi_channel[-1]) - epi embedding
-    """
-
-    def __init__(self, epi_dim, epi_channel):
-        super().__init__()
-
-        self.layers = nn.ModuleList()
-        in_features = epi_dim
-        for out_features in epi_channel:
-            self.layers.append(nn.Linear(in_features, out_features))
-            in_features = out_features
-
-        self.output_dim = epi_channel[-1]
-
-        self._init_weights()
-
-    def _init_weights(self):
-        """Initialize weights using Kaiming initialization."""
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        """
-        Forward pass.
-
-        Args:
-            x: (batch, epi_dim) epi features
-
-        Returns:
-            (batch, 32) epi embedding
-        """
-        for layer in self.layers:
-            x = F.relu(layer(x))
-        return x
 
 
 class GraphEdgeAttention(nn.Module):
@@ -186,14 +135,7 @@ class GraphEdgeAttention(nn.Module):
             nn.Linear(attn_dim, 1)
         )
 
-        self._init_weights()
-
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+        _kaiming_init(self)
 
     def forward(self, g, h, edge_feat):
         """
@@ -227,14 +169,41 @@ class GraphEdgeAttention(nn.Module):
             return out
 
 
+class AuxBranch(nn.Module):
+    """Dense branch for auxiliary tree statistics.
+
+    Features: mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips.
+
+    Input: (batch, 5)
+    Output: (batch, aux_output)
+    """
+
+    def __init__(self, args):
+        super().__init__()
+        aux_hidden = args['aux_hidden']
+        aux_output = args['aux_output']
+        self.fc = nn.Sequential(
+            nn.Linear(5, aux_hidden),
+            nn.ReLU(),
+            nn.Linear(aux_hidden, aux_output),
+            nn.ReLU(),
+        )
+        self.output_dim = aux_output
+        _kaiming_init(self)
+
+    def forward(self, x):
+        """Forward pass: (batch, 5) auxiliary stats -> (batch, aux_output)."""
+        return self.fc(x)
+
+
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT: CNN encoder + Epi branch + GAT for single-task prediction.
+    CBLV-GAT: CNN encoder + aux branch + GAT for single-task prediction.
 
     Architecture:
     1. CNN encoder processes each node's CBLV independently -> 96-dim
-    2. Epi branch processes each node's epi features -> 32-dim
-    3. Concat -> 128-dim node embedding
+    2. Aux branch processes tree statistics -> 32-dim
+    3. Concat CNN + aux -> 128-dim node embedding
     4. GAT aggregates spatial information using DTW edges -> 256-dim
     5. Classifier predicts target label per node
 
@@ -249,22 +218,17 @@ class CBLV_GAT(nn.Module):
         self.cnn_encoder = CBLVConvEncoder(args)
         cnn_output_dim = self.cnn_encoder.output_dim  # 96
 
-        # Epi branch for epidemiological features
-        epi_dim = args['epi_dim']
-        epi_channel = list(args['epi_channel'])
-        self.epi_branch = EpiBranch(epi_dim, epi_channel)
-        epi_output_dim = self.epi_branch.output_dim  # 32
-
-        # Combined node embedding: 96 + 32 = 128
-        node_embed_dim = cnn_output_dim + epi_output_dim
+        # Aux branch for tree statistics
+        self.aux_branch = AuxBranch(args)
+        node_dim = cnn_output_dim + self.aux_branch.output_dim
 
         # Graph attention layer for spatial aggregation
         edge_dim = args['edge_dim']
         attn_dim = args['attn_dim']
-        self.graph_attention = GraphEdgeAttention(node_embed_dim, edge_dim, attn_dim)
+        self.graph_attention = GraphEdgeAttention(node_dim, edge_dim, attn_dim)
 
         # GAT output: concat(self_128, neighbor_agg_128) = 256
-        gat_output_dim = node_embed_dim * 2  # 256
+        gat_output_dim = node_dim * 2  # 256
         lbl_channel = list(args['lbl_channel'])
 
         # Classifier: 256 -> 128 -> 64 -> 32 -> 1
@@ -276,38 +240,27 @@ class CBLV_GAT(nn.Module):
         self.classifier.append(nn.Linear(in_features, 1))
 
         # Activation
-        act_name = args['activation_func']
-        self.act_fn = {'relu': F.relu, 'leaky_relu': F.leaky_relu, 'elu': F.elu}.get(act_name, F.relu)
+        self.act_fn = _ACTIVATIONS.get(args['activation_func'], F.relu)
 
-        self._init_classifier_weights()
+        _kaiming_init(self.classifier)
 
-    def _init_classifier_weights(self):
-        for m in self.classifier:
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-    def forward(self, g, node_cblv, edge_feat):
+    def forward(self, g, node_cblv, node_aux, edge_feat):
         """
         Forward pass.
 
         Args:
             g: DGL graph with N nodes
             node_cblv: (N, 4, subtree_width) CBLV features per node
+            node_aux: (N, 5) auxiliary tree statistics per node
             edge_feat: (E, 3) DTW edge features
 
         Returns:
             (N,) predictions per node
         """
         # CNN encode each node's CBLV
-        h_cblv = self.cnn_encoder(node_cblv)  # (N, 96)
-
-        # Epi branch
-        h_epi = self.epi_branch(g.ndata['epi'])  # (N, 32)
-
-        # Combine phylogenetic and epidemiological embeddings
-        h = torch.cat([h_cblv, h_epi], dim=1)  # (N, 128)
+        h_cnn = self.cnn_encoder(node_cblv)  # (N, 96)
+        h_aux = self.aux_branch(node_aux)    # (N, 32)
+        h = torch.cat([h_cnn, h_aux], dim=1) # (N, 128)
 
         # Graph attention message passing
         h = self.graph_attention(g, h, edge_feat)  # (N, 256)

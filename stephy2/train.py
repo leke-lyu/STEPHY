@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Training script for STEPHY (Phylogeny-only Model).
+Training script for STEPHY2 (Phylogeny-only Model + Aux Branch).
 
 Requires precomputed graphs from build_graphs.py.
 """
@@ -22,7 +22,7 @@ from config import get_config
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='STEPHY: Train with phylogeny data')
+    parser = argparse.ArgumentParser(description='STEPHY2: Train with phylogeny + aux data')
     parser.add_argument('--graphs', required=True, help='Precomputed graphs file (from build_graphs.py)')
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
@@ -36,9 +36,30 @@ def set_seed(seed):
     torch.manual_seed(seed)
 
 
+def normalize_aux_features(train_graphs, val_graphs, test_graphs):
+    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats)."""
+    train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)
+
+    # Log transform (clamp to avoid log(0))
+    train_aux = torch.log(train_aux.clamp(min=1e-8))
+    mean = train_aux.mean(dim=0)
+    std = train_aux.std(dim=0)
+    std = torch.where(std < 1e-8, torch.ones_like(std), std)
+
+    for graph_list in [train_graphs, val_graphs, test_graphs]:
+        for g, *_ in graph_list:
+            g.ndata['aux'] = (torch.log(g.ndata['aux'].clamp(min=1e-8)) - mean) / std
+
+    return {'mean': mean, 'std': std}
+
+
 def normalize_edge_features(train_graphs, val_graphs, test_graphs):
-    """Z-score normalize edge features using training set statistics."""
+    """Log + z-score for distance (ch0) and lag_std (ch2); plain z-score for lag_mean (ch1)."""
     train_edge = torch.cat([g.edata['feat'] for g, *_ in train_graphs], dim=0)
+
+    # Log transform ch0 (distance) and ch2 (lag_std)
+    train_edge[:, 0] = torch.log(train_edge[:, 0].clamp(min=1e-8))
+    train_edge[:, 2] = torch.log(train_edge[:, 2].clamp(min=1e-8))
 
     mean = train_edge.mean(dim=0)
     std = train_edge.std(dim=0)
@@ -46,7 +67,10 @@ def normalize_edge_features(train_graphs, val_graphs, test_graphs):
 
     for graph_list in [train_graphs, val_graphs, test_graphs]:
         for g, *_ in graph_list:
-            g.edata['feat'] = (g.edata['feat'] - mean) / std
+            feat = g.edata['feat'].clone()
+            feat[:, 0] = torch.log(feat[:, 0].clamp(min=1e-8))
+            feat[:, 2] = torch.log(feat[:, 2].clamp(min=1e-8))
+            g.edata['feat'] = (feat - mean) / std
 
     return {'mean': mean, 'std': std}
 
@@ -67,6 +91,22 @@ def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
     return {'mean': mean, 'std': std}
 
 
+def _forward_batch(model, batched_g, label_name):
+    """Run model forward and reshape predictions/labels to per-graph (batch, N)."""
+    node_cblv = batched_g.ndata['cblv']
+    node_aux = batched_g.ndata['aux']
+    edge_feat = batched_g.edata['feat']
+
+    predictions = model(batched_g, node_cblv, node_aux, edge_feat)
+    labels = batched_g.ndata[label_name]
+
+    num_nodes_list = batched_g.batch_num_nodes().tolist()
+    per_graph_preds = torch.stack(predictions.split(num_nodes_list))
+    per_graph_labels = torch.stack(labels.split(num_nodes_list))
+
+    return predictions, labels, per_graph_preds, per_graph_labels
+
+
 def train_epoch(model, dataloader, optimizer, criterion, label_name, is_classification=False):
     """
     Train for one epoch.
@@ -82,27 +122,18 @@ def train_epoch(model, dataloader, optimizer, criterion, label_name, is_classifi
     total_graphs = 0
 
     for batched_g in dataloader:
-        node_cblv = batched_g.ndata['cblv']
-        edge_feat = batched_g.edata['feat']
-
         optimizer.zero_grad()
-        predictions = model(batched_g, node_cblv, edge_feat)
-        labels = batched_g.ndata[label_name]
-
-        num_nodes_list = batched_g.batch_num_nodes().tolist()
-        per_graph_preds = torch.stack(predictions.split(num_nodes_list))
-        per_graph_labels = torch.stack(labels.split(num_nodes_list))
+        _, _, per_graph_preds, per_graph_labels = _forward_batch(model, batched_g, label_name)
 
         if is_classification:
-            targets = per_graph_labels.argmax(dim=1)
-            loss = criterion(per_graph_preds, targets)
+            loss = criterion(per_graph_preds, per_graph_labels.argmax(dim=1))
         else:
             loss = criterion(per_graph_preds, per_graph_labels)
 
         loss.backward()
         optimizer.step()
 
-        batch_size = len(num_nodes_list)
+        batch_size = per_graph_preds.shape[0]
         total_loss += loss.item() * batch_size
         total_graphs += batch_size
 
@@ -124,15 +155,7 @@ def evaluate(model, dataloader, criterion, label_name, is_classification=False):
 
     with torch.no_grad():
         for batched_g in dataloader:
-            node_cblv = batched_g.ndata['cblv']
-            edge_feat = batched_g.edata['feat']
-
-            predictions = model(batched_g, node_cblv, edge_feat)
-            labels = batched_g.ndata[label_name]
-
-            num_nodes_list = batched_g.batch_num_nodes().tolist()
-            per_graph_preds = torch.stack(predictions.split(num_nodes_list))
-            per_graph_labels = torch.stack(labels.split(num_nodes_list))
+            predictions, labels, per_graph_preds, per_graph_labels = _forward_batch(model, batched_g, label_name)
 
             if is_classification:
                 targets = per_graph_labels.argmax(dim=1)
@@ -144,7 +167,7 @@ def evaluate(model, dataloader, criterion, label_name, is_classification=False):
                 all_preds.extend(predictions.numpy())
                 all_labels.extend(labels.numpy())
 
-            batch_size = len(num_nodes_list)
+            batch_size = per_graph_preds.shape[0]
             total_loss += loss.item() * batch_size
             total_graphs += batch_size
 
@@ -168,7 +191,6 @@ def main():
 
     label_name = args.label
     is_classification = (label_name == 'Ancestral_State')
-    data_cfg = config['data']
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -193,21 +215,23 @@ def main():
 
     # Summary
     task_type = 'classification' if is_classification else 'regression'
+    label_info = f"{label_name}({task_type})" if is_classification else f"{label_name}({task_type}) zscore"
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
-    print(f"Features: CBLV [0,1], Edge {data_cfg.get('edge_norm', 'zscore')}")
-    print(f"Label: {label_name} ({task_type})")
+    print(f"Features: CBLV(4ch) rescale[0,1]")
+    print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
+    print(f"  Edge(dtw_dist, lag_mean, lag_std) ch0,2:log+zscore ch1:zscore")
+    print(f"Label: {label_info}")
 
-    # Normalize features based on config
-    edge_norm = None
-    if data_cfg.get('edge_norm', 'zscore') == 'zscore':
-        edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
+    # Normalize: aux -> edge -> label
+    aux_norm = normalize_aux_features(train_graphs, val_graphs, test_graphs)
+    edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
 
     label_norm = None
-    if not is_classification and data_cfg.get('label_norm', 'zscore') == 'zscore':
+    if not is_classification:
         label_norm = normalize_labels(train_graphs, val_graphs, test_graphs, label_name)
 
     # Save normalization params
-    torch.save({'edge': edge_norm, 'label': label_norm, 'config': data_cfg},
+    torch.save({'aux': aux_norm, 'edge': edge_norm, 'label': label_norm},
                output_dir / 'norm_params.pt')
 
     # Create DataLoaders
@@ -280,18 +304,25 @@ def main():
     test_preds = test_results['preds']
     test_labels = test_results['labels']
 
-    # Compute metrics and build prediction DataFrame
+    pred_df = _print_metrics(test_preds, test_labels, is_classification, label_name,
+                              label_norm, args.num_locations)
+    _save_results(output_dir, best_state, history, pred_df)
+
+
+def _print_metrics(test_preds, test_labels, is_classification, label_name,
+                   label_norm, num_locations):
+    """Print test metrics and return prediction DataFrame."""
     if is_classification:
         acc = accuracy_score(test_labels, test_preds)
         print(f"Test: Accuracy={acc:.4f}")
 
-        for c in range(args.num_locations):
+        for c in range(num_locations):
             mask = test_labels == c
             if mask.sum() > 0:
                 class_acc = (test_preds[mask] == c).mean()
                 print(f"  Class {c}: {mask.sum()} samples, accuracy={class_acc:.4f}")
 
-        pred_df = pd.DataFrame({
+        return pd.DataFrame({
             'true_ancestor': test_labels.astype(int),
             'pred_ancestor': test_preds.astype(int),
         })
@@ -306,12 +337,14 @@ def main():
         mse = mean_squared_error(test_labels, test_preds)
         print(f"Test: R2={r2:.4f}, MSE={mse:.4f}")
 
-        pred_df = pd.DataFrame({
+        return pd.DataFrame({
             f'true_{label_name}': test_labels,
             f'pred_{label_name}': test_preds,
         })
 
-    # Save results
+
+def _save_results(output_dir, best_state, history, pred_df):
+    """Save model, training history, and predictions."""
     torch.save(best_state, output_dir / 'best_model.pt')
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
     pred_df.to_csv(output_dir / 'test_predictions.csv', index=False)

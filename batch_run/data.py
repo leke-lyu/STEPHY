@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for STEPHY+ (Phylogeny + Epidemiological Data Model).
+Data Loading and Preprocessing for STEPHY2 (Phylogeny-only Model + Aux Branch).
 
-Loads phylogenetic trees (*_beast2.trees) and node data (*_nf.csv) to build DGL graphs.
+Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
 """
 
 import re
@@ -42,7 +42,10 @@ def load_tree(tree_file, tree_idx=0):
 def get_location(node):
     """Extract location ID from node annotation (e.g., 'I{7}' -> 7)."""
     annot = node.annotations.get_value('type') if node.annotations else None
-    return int(str(annot).split('{')[1].split('}')[0]) if annot and '{' in str(annot) else None
+    if annot and '{' in str(annot):
+        annot_str = str(annot)
+        return int(annot_str.split('{')[1].split('}')[0])
+    return None
 
 
 def is_sample(node):
@@ -84,9 +87,9 @@ class VirtualSubtreeEncoder:
             else:
                 nd.loc_counts, nd.loc_max_dist = {}, {}
                 for child in nd.child_nodes():
-                    for loc, cnt in getattr(child, 'loc_counts', {}).items():
+                    for loc, cnt in child.loc_counts.items():
                         nd.loc_counts[loc] = nd.loc_counts.get(loc, 0) + cnt
-                    for loc, dist in getattr(child, 'loc_max_dist', {}).items():
+                    for loc, dist in child.loc_max_dist.items():
                         nd.loc_max_dist[loc] = max(nd.loc_max_dist.get(loc, 0), dist)
 
     def _find_mrca(self, loc):
@@ -149,19 +152,34 @@ class VirtualSubtreeEncoder:
 
     def encode_cblv(self, loc, subtree_width=None, rescale=True):
         """
-        Encode CBLV matrix for a target location.
+        Encode CBLV matrix and auxiliary statistics for a target location.
 
-        Returns: (heights, stem, n_tips)
+        Returns: (heights, aux_stats)
             heights: (subtree_width, 4) CBLV matrix, rescaled to [0,1]
-            stem: Distance from root to MRCA
-            n_tips: Number of tips at this location
+            aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips]
         """
         mrca = self._find_mrca(loc)
+        n_tips = self.phy.seed_node.loc_counts.get(loc, 0)
         if mrca is None:
-            return np.zeros((subtree_width or 1, 4)), 0, self.phy.seed_node.loc_counts.get(loc, 0)
+            return np.zeros((subtree_width or 1, 4)), [0.0, 0.0, 0.0, 0.0, float(n_tips)]
 
-        stem = mrca.root_distance
+        mrca_depth = mrca.root_distance
         n_tips = mrca.loc_counts.get(loc, 0)
+
+        # Compute avg path length from MRCA to each tip and collect tip sampling times
+        tip_dists = []
+        tip_times = []
+        for nd in mrca.leaf_iter():
+            if is_sample(nd) and get_location(nd) == loc:
+                tip_dists.append(nd.root_distance - mrca_depth)
+                tip_times.append(float(nd.annotations.get_value('time')))
+
+        aux_stats = [mrca_depth, min(tip_times), max(tip_times),
+                     float(np.mean(tip_dists)), float(n_tips)]
+
+        # Fill CBLV matrix from virtual in-order traversal.
+        # idx tracks the current leaf position; internal nodes advance idx.
+        # Columns: 0=leaf dist from branch, 1=internal depth, 2=leaf accum edge, 3=internal accum edge
         heights = np.zeros((n_tips, 4))
         idx = 0
 
@@ -169,12 +187,14 @@ class VirtualSubtreeEncoder:
             if idx >= n_tips:
                 break
             if event_type == 'leaf':
-                heights[idx, 0] = val1 + (stem if idx == 0 else 0)
-                heights[idx, 2] = val2
+                # First leaf gets absolute distance (includes mrca_depth); others get relative
+                heights[idx, 0] = val1 + (mrca_depth if idx == 0 else 0)
+                heights[idx, 2] = val2  # accumulated edge length to this leaf
             else:
+                # Internal node: store at next leaf's row, then advance position
                 if idx + 1 < n_tips:
-                    heights[idx + 1, 1] = val1
-                    heights[idx + 1, 3] = val2
+                    heights[idx + 1, 1] = val1  # internal node depth
+                    heights[idx + 1, 3] = val2  # accumulated edge length to internal node
                 idx += 1
 
         if rescale:
@@ -186,7 +206,7 @@ class VirtualSubtreeEncoder:
             padded[:min(n_tips, subtree_width)] = heights[:min(n_tips, subtree_width)]
             heights = padded
 
-        return heights, stem, n_tips
+        return heights, aux_stats
 
     def get_all_locations(self):
         """Get sorted list of all sample locations in the tree."""
@@ -316,12 +336,12 @@ def compute_dtw_edge_features(tree_file, tree_idx=0):
 
 
 # ==============================================================================
-# Node Data Loading (Labels + Epi Features)
+# Label Loading
 # ==============================================================================
 
-def load_node_data(input_folder, file_prefix, num_nodes):
+def load_labels(input_folder, file_prefix, num_nodes):
     """
-    Load labels and epidemiological features from *_nf.csv file.
+    Load labels from *_nf.csv file.
 
     Args:
         input_folder: Path to data folder
@@ -329,8 +349,6 @@ def load_node_data(input_folder, file_prefix, num_nodes):
         num_nodes: Expected number of nodes (locations)
 
     Returns:
-        epi_features: np.ndarray of shape (num_nodes, 4) with columns
-                      [Initial_Population, Epidemic_Peak, Peak_Timing, Accumulated_Infections]
         labels: dict with 'R0', 'Source_Sink_Score', 'Recovery_Rate', and
                 'Ancestral_State' arrays
     """
@@ -345,10 +363,6 @@ def load_node_data(input_folder, file_prefix, num_nodes):
     if len(df) != num_nodes:
         raise ValueError(f"Label data has {len(df)} rows, expected {num_nodes}")
 
-    # Extract epi features
-    epi_columns = ['Initial_Population', 'Epidemic_Peak', 'Peak_Timing', 'Accumulated_Infections']
-    epi_features = df[epi_columns].values.astype(np.float32)
-
     # Extract labels
     labels = {
         'R0': df['R0'].values.astype(np.float32),
@@ -357,7 +371,7 @@ def load_node_data(input_folder, file_prefix, num_nodes):
         'Ancestral_State': df['Ancestral_State'].values.astype(np.float32),
     }
 
-    return epi_features, labels
+    return labels
 
 
 # ==============================================================================
@@ -383,10 +397,12 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
 
     # CBLV shape: (n_nodes, subtree_width, 4) -> transpose to (n_nodes, 4, subtree_width)
     node_cblv = np.zeros((n_nodes, subtree_width, 4))
+    node_aux = np.zeros((n_nodes, 5))
 
     for i, loc in enumerate(locations):
-        cblv, _, _ = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
+        cblv, aux_stats = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
         node_cblv[i] = cblv
+        node_aux[i] = aux_stats
 
     # Transpose to (n_nodes, 4, subtree_width) for Conv1d
     node_cblv = np.transpose(node_cblv, (0, 2, 1))
@@ -396,14 +412,14 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     if locations != dtw_locs:
         raise ValueError(f"Location mismatch: CBLV={locations}, DTW={dtw_locs}")
 
-    # Load node data (labels + epi features) from preprocessed CSV
+    # Load labels from preprocessed CSV
     file_prefix = Path(tree_file).stem.replace('_beast2', '')
-    epi_features, labels = load_node_data(input_folder, file_prefix, n_nodes)
+    labels = load_labels(input_folder, file_prefix, n_nodes)
 
     # Construct graph
     g = dgl.graph((src, dst), num_nodes=n_nodes)
     g.ndata['cblv'] = torch.tensor(node_cblv, dtype=torch.float32)
-    g.ndata['epi'] = torch.tensor(epi_features, dtype=torch.float32)
+    g.ndata['aux'] = torch.tensor(node_aux, dtype=torch.float32)
     g.ndata['location'] = torch.tensor(locations, dtype=torch.long)
     g.ndata['R0'] = torch.tensor(labels['R0'], dtype=torch.float32)
     g.ndata['Source_Sink_Score'] = torch.tensor(labels['Source_Sink_Score'], dtype=torch.float32)

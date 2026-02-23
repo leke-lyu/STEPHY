@@ -68,25 +68,18 @@ def main():
     num_trees = len(tree_stats)
 
     # tree_width: total tips per tree
-    tree_widths = [(t[0], t[1]) for t in tree_stats]
-    tree_widths_sorted = sorted(tree_widths, key=lambda x: x[1])
-    min_tree = tree_widths_sorted[0]
-    max_tree = tree_widths_sorted[-1]
+    min_tree = min(tree_stats, key=lambda t: t[1])
+    max_tree = max(tree_stats, key=lambda t: t[1])
 
     # subtree_width: max tips per location per tree
-    subtree_stats = []  # (tree_id, location, tips)
-    for tree_id, total_tips, loc_counts in tree_stats:
-        for loc, count in loc_counts.items():
-            subtree_stats.append((tree_id, loc, count))
-
-    subtree_sorted = sorted(subtree_stats, key=lambda x: x[2])
-    min_subtree = subtree_sorted[0]
-    max_subtree = subtree_sorted[-1]
+    subtree_stats = [(tree_id, loc, count)
+                     for tree_id, _, loc_counts in tree_stats
+                     for loc, count in loc_counts.items()]
+    min_subtree = min(subtree_stats, key=lambda x: x[2])
+    max_subtree = max(subtree_stats, key=lambda x: x[2])
 
     # num_locations
-    all_locations = set()
-    for _, _, loc_counts in tree_stats:
-        all_locations.update(loc_counts.keys())
+    all_locations = {loc for _, _, loc_counts in tree_stats for loc in loc_counts}
     num_locations = len(all_locations)
 
     # Output
