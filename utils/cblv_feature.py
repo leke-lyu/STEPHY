@@ -151,14 +151,15 @@ class VirtualSubtreeEncoder:
                 child = relevant_children[0]
                 yield from self._virtual_inorder(child, target_loc, last_branch_root_dist, mrca)
 
-    def encode_cblv(self, target_loc, tree_width=None, rescale=True):
+    def encode_cblv(self, target_loc, tree_width=None, rescale=True, cblv_scale='tree_height'):
         """
         Compute CBLV for a target location without creating subtree.
 
         Args:
             target_loc: Location ID to encode
             tree_width: If provided, pad output to this many rows (default: actual n_tips)
-            rescale: Whether to normalize by tree height
+            rescale: Whether to normalize (kept for backward compatibility)
+            cblv_scale: 'tree_height' (divide by tree height -> [0,1]) or 'log1p' (log(x+1))
 
         Returns:
             (cblv_matrix, stem_distance, n_tips)
@@ -195,7 +196,10 @@ class VirtualSubtreeEncoder:
                 height_idx += 1
 
         if rescale:
-            heights = heights / self.tree_height
+            if cblv_scale == 'tree_height':
+                heights = heights / self.tree_height
+            elif cblv_scale == 'log1p':
+                heights = np.log1p(heights)
 
         # Pad to tree_width if specified
         if tree_width and tree_width > n_tips:

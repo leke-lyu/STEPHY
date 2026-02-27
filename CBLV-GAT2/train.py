@@ -197,7 +197,7 @@ def main():
     task_type = 'classification' if is_classification else 'regression'
     label_info = f"{label_name}({task_type})" if is_classification else f"{label_name}({task_type}) zscore"
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
-    print(f"Features: CBLV(4ch) rescale[0,1]")
+    print(f"Features: CBLV(4ch) {config['data']['cblv_scale']}")
     print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
     print(f"Label: {label_info}")
 

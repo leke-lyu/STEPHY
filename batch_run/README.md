@@ -4,33 +4,35 @@ source ~/.bashrc
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 conda activate stephy
 
-python3 outbreak_check.py /scratch/llyu30/epidata/30k/
+python3 outbreak_check.py /projects/lau_projects/epidata/100k
 
+(stephy) [llyu30@node23 batch_run]$  python3 outbreak_check.py /projects/lau_projects/epidata/100k
+Dataset:   /projects/lau_projects/epidata/100k
 Locations: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-=== All trees (30000 trees) ===
-  tree_width     — Range: [160, 11472],  Mean: 2406.4
-    Min: batch_1/1106_0 (160 tips)
-    Max: batch_10/1043_0 (11472 tips)
-  subtree_width  — Range: [11, 1732],  Mean: 240.6
-    Min: tree=batch_0/1027_0, loc=6 (11 tips)
-    Max: tree=batch_2/1251_0, loc=4 (1732 tips)
+=== All trees (100000 trees) ===
+  tree_width     — Range: [202, 11001],  Mean: 2341.3
+    Min: batch_23/2418_0 (202 tips)
+    Max: batch_3/2568_0 (11001 tips)
+  subtree_width  — Range: [11, 1665],  Mean: 234.1
+    Min: tree=batch_0/1211_0, loc=8 (11 tips)
+    Max: tree=batch_22/2279_0, loc=4 (1665 tips)
 
-=== Discarding trees with any subtree_width > 872 (top 1% subtree threshold) ===
-    30000 -> 28599 trees remain
+=== Discarding trees with any subtree_width > 834 (top 1% subtree threshold) ===
+    100000 -> 95157 trees remain
 
-  tree_width     — Range: [160, 7156],  Mean: 2209.1
-    Min: batch_1/1106_0 (160 tips)
-    Max: batch_0/534_0 (7156 tips)
-  subtree_width  — Range: [11, 872],  Mean: 220.9
-    Min: tree=batch_0/1027_0, loc=6 (11 tips)
-    Max: tree=batch_1/1339_0, loc=4 (872 tips)
+  tree_width     — Range: [202, 6845],  Mean: 2150.9
+    Min: batch_23/2418_0 (202 tips)
+    Max: batch_2/2504_0 (6845 tips)
+  subtree_width  — Range: [11, 834],  Mean: 215.1
+    Min: tree=batch_0/1211_0, loc=8 (11 tips)
+    Max: tree=batch_1/3894_0, loc=5 (834 tips)
 
---num_locations 10 --subtree_width 872
+--num_locations 10 --subtree_width 834
 
-bash submit_build_graphs.sh /scratch/llyu30/epidata/30k/ 872
+bash submit_build_graphs.sh /projects/lau_projects/epidata/100k 834
 
-python3 merge_graphs.py --data_dir /scratch/llyu30/epidata/28k/
+python3 merge_graphs.py --data_dir /projects/lau_projects/epidata/100k
 
-bash submit_train.sh /scratch/llyu30/epidata/28k/graphs.pt 10
+bash submit_train.sh /projects/lau_projects/epidata/100k/graphs.pt 10
 

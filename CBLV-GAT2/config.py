@@ -58,6 +58,11 @@ TRAIN_ARGS = {
     'random_seed': 42,
 }
 
+# Data processing parameters
+DATA_ARGS = {
+    'cblv_scale': 'tree_height',  # CBLV scaling: 'tree_height' (divide by tree height -> [0,1]) or 'log1p' (log(x+1))
+}
+
 def get_config():
     """Get full configuration dictionary.
 
@@ -66,6 +71,7 @@ def get_config():
     return {
         'model': MODEL_ARGS,
         'train': TRAIN_ARGS,
+        'data': DATA_ARGS,
     }
 
 

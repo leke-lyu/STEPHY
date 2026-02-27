@@ -150,12 +150,17 @@ class VirtualSubtreeEncoder:
             if relevant:
                 yield from self._virtual_inorder(relevant[0], loc, last_branch_dist, mrca)
 
-    def encode_cblv(self, loc, subtree_width=None, rescale=True):
+    def encode_cblv(self, loc, subtree_width=None, cblv_scale='tree_height'):
         """
         Encode CBLV matrix and auxiliary statistics for a target location.
 
+        Args:
+            loc: Target location ID
+            subtree_width: Pad/truncate to this many rows
+            cblv_scale: 'tree_height' (divide by tree height -> [0,1]) or 'log1p' (log(x+1))
+
         Returns: (heights, aux_stats)
-            heights: (subtree_width, 4) CBLV matrix, rescaled to [0,1]
+            heights: (subtree_width, 4) CBLV matrix, scaled according to cblv_scale
             aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips]
         """
         mrca = self._find_mrca(loc)
@@ -197,8 +202,10 @@ class VirtualSubtreeEncoder:
                     heights[idx + 1, 3] = val2  # accumulated edge length to internal node
                 idx += 1
 
-        if rescale:
+        if cblv_scale == 'tree_height':
             heights /= self.tree_height
+        elif cblv_scale == 'log1p':
+            heights = np.log1p(heights)
 
         # Pad to subtree_width
         if subtree_width and n_tips != subtree_width:
@@ -378,7 +385,7 @@ def load_labels(input_folder, file_prefix, num_nodes):
 # Graph Building
 # ==============================================================================
 
-def build_graph(tree_file, tree_idx, subtree_width, input_folder):
+def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tree_height'):
     """
     Build a single DGL graph from a tree.
 
@@ -400,7 +407,7 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     node_aux = np.zeros((n_nodes, 5))
 
     for i, loc in enumerate(locations):
-        cblv, aux_stats = encoder.encode_cblv(loc, subtree_width=subtree_width, rescale=True)
+        cblv, aux_stats = encoder.encode_cblv(loc, subtree_width=subtree_width, cblv_scale=cblv_scale)
         node_cblv[i] = cblv
         node_aux[i] = aux_stats
 
@@ -430,7 +437,7 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder):
     return g, locations, tree_height
 
 
-def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees', verbose=True):
+def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees', verbose=True, cblv_scale='tree_height'):
     """
     Build DGL graphs from all trees in folder.
 
@@ -451,7 +458,7 @@ def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees',
 
         for idx in range(n_trees):
             try:
-                g, locs, height = build_graph(str(tree_file), idx, subtree_width, input_folder)
+                g, locs, height = build_graph(str(tree_file), idx, subtree_width, input_folder, cblv_scale=cblv_scale)
                 graphs.append((g, f"{file_prefix}_{idx}", locs, height))
             except Exception as e:
                 if verbose:

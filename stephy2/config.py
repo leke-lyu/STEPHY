@@ -60,6 +60,7 @@ TRAIN_ARGS = {
 # Data processing parameters
 DATA_ARGS = {
     'dtw_num_points': 200,  # KDE grid resolution for DTW curves
+    'cblv_scale': 'tree_height',  # CBLV scaling: 'tree_height' (divide by tree height -> [0,1]) or 'log1p' (log(x+1))
 }
 
 def get_config():
