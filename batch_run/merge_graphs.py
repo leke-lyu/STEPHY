@@ -8,17 +8,17 @@ import torch
 
 def main():
     parser = argparse.ArgumentParser(description='Merge batch graphs.pt files')
-    parser.add_argument('--data_dir', required=True,
-                        help='Parent directory containing batch_* folders')
+    parser.add_argument('--result_dir', required=True,
+                        help='Result directory containing batch_*_graphs.pt files')
     parser.add_argument('--output', default=None,
-                        help='Output path (default: <data_dir>/graphs.pt)')
+                        help='Output path (writes to result_dir/graphs.pt if omitted)')
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir)
-    batch_files = sorted(data_dir.glob('batch_*/graphs.pt'))
+    result_dir = Path(args.result_dir)
+    batch_files = sorted(result_dir.glob('batch_*_graphs.pt'))
 
     if not batch_files:
-        print(f"Error: No batch_*/graphs.pt found in {data_dir}")
+        print(f"Error: No batch_*_graphs.pt found in {result_dir}")
         exit(1)
 
     print(f"Found {len(batch_files)} batch files:")
@@ -28,7 +28,7 @@ def main():
         print(f"  {f}: {len(graphs)} graphs")
         all_graphs.extend(graphs)
 
-    output_path = Path(args.output) if args.output else data_dir / 'graphs.pt'
+    output_path = Path(args.output) if args.output else result_dir / 'graphs.pt'
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(all_graphs, output_path)
     print(f"Merged {len(all_graphs)} graphs -> {output_path}")

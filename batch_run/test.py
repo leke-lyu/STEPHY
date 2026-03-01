@@ -3,10 +3,14 @@
 Test trained models on a new dataset.
 
 Evaluates all 12 pipeline x label combinations (3 pipelines x 4 labels)
-using pre-trained models from a results directory.
+using pre-trained models from a result directory.
 
 Usage:
-    python3 test.py --graphs <graphs.pt> --model_dir <results_dir> --num_locations 10
+    python3 test.py --graphs <graphs.pt> --model_dir <result_dir> --num_locations <N>
+
+Expected layout under model_dir:
+    <model_dir>/<pipeline>/<label_short>/best_model.pt
+    <model_dir>/<pipeline>/<label_short>/norm_params.pt
 """
 
 import argparse
@@ -36,10 +40,8 @@ STEPHY_ROOT = Path(__file__).resolve().parent.parent
 def parse_args():
     parser = argparse.ArgumentParser(description='Test trained models on new dataset')
     parser.add_argument('--graphs', required=True, help='Path to new dataset graphs.pt')
-    parser.add_argument('--model_dir', required=True, help='Path to results directory')
+    parser.add_argument('--model_dir', required=True, help='Path to directory containing trained models')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
-    parser.add_argument('--output_dir', default=None,
-                        help='Output directory (default: <model_dir>/test_2k/)')
     return parser.parse_args()
 
 
@@ -217,7 +219,7 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
     # Deep copy so normalizations don't leak across combinations
     graphs = deepcopy(raw_graphs)
 
-    # CBLV-GAT2: add self-loops (matches training at CBLV-GAT2/train.py:166)
+    # CBLV-GAT2: add self-loops (matches training)
     if pipeline == 'CBLV-GAT2':
         graphs = [(dgl.add_self_loop(g), *rest) for g, *rest in graphs]
 
@@ -258,7 +260,7 @@ def main():
 
     graphs_path = Path(args.graphs)
     model_dir = Path(args.model_dir)
-    output_dir = Path(args.output_dir) if args.output_dir else model_dir / 'test_2k'
+    output_dir = graphs_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading graphs from {graphs_path}...")

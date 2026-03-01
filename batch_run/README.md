@@ -1,38 +1,71 @@
-srun -p interactive-cpu --pty bash
+# Batch Run Pipeline
 
+End-to-end workflow: check data, build per-batch graphs, merge, train, and test.
+
+## Prerequisites
+
+```bash
+srun -p interactive-cpu --pty bash
 source ~/.bashrc
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 conda activate stephy
+```
 
-python3 outbreak_check.py /projects/lau_projects/epidata/100k
+## 1. Check data and determine parameters
 
-(stephy) [llyu30@node23 batch_run]$  python3 outbreak_check.py /projects/lau_projects/epidata/100k
-Dataset:   /projects/lau_projects/epidata/100k
-Locations: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+```bash
+python3 outbreak_check.py <data_dir>
+```
 
-=== All trees (100000 trees) ===
-  tree_width     — Range: [202, 11001],  Mean: 2341.3
-    Min: batch_23/2418_0 (202 tips)
-    Max: batch_3/2568_0 (11001 tips)
-  subtree_width  — Range: [11, 1665],  Mean: 234.1
-    Min: tree=batch_0/1211_0, loc=8 (11 tips)
-    Max: tree=batch_22/2279_0, loc=4 (1665 tips)
+Note the recommended `--num_locations` and `--subtree_width` from the output.
 
-=== Discarding trees with any subtree_width > 834 (top 1% subtree threshold) ===
-    100000 -> 95157 trees remain
+## 2. Build per-batch graphs (SLURM array)
 
-  tree_width     — Range: [202, 6845],  Mean: 2150.9
-    Min: batch_23/2418_0 (202 tips)
-    Max: batch_2/2504_0 (6845 tips)
-  subtree_width  — Range: [11, 834],  Mean: 215.1
-    Min: tree=batch_0/1211_0, loc=8 (11 tips)
-    Max: tree=batch_1/3894_0, loc=5 (834 tips)
+```bash
+bash submit_build_graphs.sh <data_dir> <subtree_width>
+```
 
---num_locations 10 --subtree_width 834
+Reads from `<data_dir>/batch_*/` and writes each batch's graphs to
+`<output_dir>/batch_*_graphs.pt`. Logs go to `<output_dir>/logs/`.
 
-bash submit_build_graphs.sh /projects/lau_projects/epidata/100k 834
+## 3. Merge batch graphs
 
-python3 merge_graphs.py --data_dir /projects/lau_projects/epidata/100k
+```bash
+python3 merge_graphs.py --result_dir <output_dir>
+```
 
-bash submit_train.sh /projects/lau_projects/epidata/100k/graphs.pt 10
+Merges all `batch_*_graphs.pt` files into a single `graphs.pt`.
 
+## 4. Train (SLURM array, 3 pipelines x 4 labels = 12 jobs)
+
+```bash
+bash submit_train.sh <output_dir>/graphs.pt <num_locations>
+```
+
+Trained models are saved to `<output_dir>/<pipeline>/<label>/`.
+
+## 5. Test on a new dataset
+
+```bash
+python3 test.py --graphs <graphs.pt> --model_dir <model_dir> --num_locations <N>
+```
+
+Results are written to the same directory as `--graphs`.
+
+## Output structure
+
+```
+<data_dir>/                     # input data (untouched)
+  batch_0/*.trees, *.csv
+  batch_1/...
+
+<output_dir>/                   # all outputs
+  batch_0_graphs.pt
+  batch_1_graphs.pt
+  graphs.pt                     # merged
+  logs/                         # SLURM logs
+  stephy2/r0/                   # training results
+  stephy2/rr/
+  CBLV-CNN2/...
+  CBLV-GAT2/...
+```

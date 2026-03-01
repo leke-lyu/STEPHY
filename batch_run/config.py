@@ -47,7 +47,7 @@ MODEL_ARGS = {
 # Training parameters
 TRAIN_ARGS = {
     'learning_rate': 0.001,
-    'batch_size': 16,       # Graph-level batching
+    'batch_size': 32,       # Graph-level batching
     'num_epochs': 500,
     'early_stopping_patience': 25,
 

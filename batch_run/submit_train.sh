@@ -2,12 +2,12 @@
 #SBATCH --job-name=train
 #SBATCH --partition=lau
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
+#SBATCH --mem=24G
 #SBATCH --time=96:00:00
 
 # Train 3 pipelines x 4 labels = 12 jobs via SLURM array.
 # Usage: bash submit_train.sh <graphs.pt> <num_locations>
-# Output: <graphs_dir>/results/<pipeline>/results_<label_short>/
+# Output: <graphs_dir>/<pipeline>/<label_short>/
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
@@ -53,7 +53,7 @@ else
     LABEL_SHORT="${LABEL_SHORTS[$LABEL_IDX]}"
 
     GRAPHS_DIR="$(dirname "$GRAPHS")"
-    OUTPUT_DIR="${GRAPHS_DIR}/results/${PIPELINE}/${LABEL_SHORT}"
+    OUTPUT_DIR="${GRAPHS_DIR}/${PIPELINE}/${LABEL_SHORT}"
     STEPHY_ROOT="$(dirname "$SCRIPT_DIR")"
     TRAIN_PY="${STEPHY_ROOT}/${PIPELINE}/train.py"
 

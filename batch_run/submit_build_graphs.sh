@@ -7,7 +7,7 @@
 
 # Build graphs.pt per batch via SLURM array.
 # Usage: bash submit_build_graphs.sh <data_dir> <subtree_width>
-# Output: <data_dir>/batch_*/graphs.pt
+# Output: batch_*_graphs.pt in the output directory
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
@@ -18,8 +18,9 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
         exit 1
     fi
 
-    DATA_DIR=$1
+    DATA_DIR="${1%/}"
     SUBTREE_WIDTH=$2
+    OUTPUT_DIR="${DATA_DIR}_result"
     NUM_BATCHES=$(ls -d "${DATA_DIR}"/batch_* 2>/dev/null | wc -l)
 
     if [ "$NUM_BATCHES" -eq 0 ]; then
@@ -27,13 +28,13 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
         exit 1
     fi
 
-    mkdir -p "${DATA_DIR}/logs"
+    mkdir -p "${OUTPUT_DIR}/logs"
     echo "Submitting ${NUM_BATCHES} jobs (subtree_width=${SUBTREE_WIDTH})"
 
     sbatch --array=0-$((NUM_BATCHES - 1)) \
-           --output="${DATA_DIR}/logs/slurm_%A_%a.out" \
-           --error="${DATA_DIR}/logs/slurm_%A_%a.err" \
-           --export=ALL,DATA_DIR="$DATA_DIR",SUBTREE_WIDTH="$SUBTREE_WIDTH",SCRIPT_DIR="$SCRIPT_DIR" \
+           --output="${OUTPUT_DIR}/logs/slurm_%A_%a.out" \
+           --error="${OUTPUT_DIR}/logs/slurm_%A_%a.err" \
+           --export=ALL,DATA_DIR="$DATA_DIR",SUBTREE_WIDTH="$SUBTREE_WIDTH",OUTPUT_DIR="$OUTPUT_DIR",SCRIPT_DIR="$SCRIPT_DIR" \
            "$0"
 else
     # --- Execution mode (SLURM array task) ---
@@ -46,5 +47,5 @@ else
     python3 "${SCRIPT_DIR}/build_graphs.py" \
         --input_dir "$INPUT_DIR" \
         --subtree_width "$SUBTREE_WIDTH" \
-        --output "${INPUT_DIR}/graphs.pt"
+        --output "${OUTPUT_DIR}/batch_${SLURM_ARRAY_TASK_ID}_graphs.pt"
 fi
