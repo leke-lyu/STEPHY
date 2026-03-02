@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build and save DGL graphs for STEPHY."""
+"""Build and save DGL graphs for STEPHY.
+
+Wraps data.build_all_graphs() with CLI argument parsing and post-build
+filtering.  Designed to be called per-batch by submit_build_graphs.sh.
+"""
 
 import argparse
 from pathlib import Path
@@ -21,7 +25,10 @@ def main():
     graphs = build_all_graphs(args.input_dir, args.subtree_width, verbose=True,
                               cblv_scale=args.cblv_scale)
 
-    # Discard trees where any location has more tips than subtree_width
+    # Discard trees where any location has more tips than subtree_width.
+    # Column 4 of the aux node features is n_tips (per-location tip count).
+    # Trees exceeding subtree_width were zero-padded during CBLV encoding,
+    # so their representations are lossy; filtering them avoids noisy inputs.
     filtered = []
     discarded = 0
     for g, graph_id, locs, height in graphs:

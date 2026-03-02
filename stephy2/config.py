@@ -12,32 +12,53 @@ Output files:
 """
 
 # Model architecture
+#
+# Design rationale:
+# - The 96-dim CNN output (48+24+24) balances capacity across three parallel
+#   branches that capture different scales of phylogenetic structure: local
+#   (plain), hierarchical (stride), and long-range (dilate).
+# - The 32-dim aux branch is intentionally smaller since it encodes only 5
+#   scalar statistics; this prevents the aux signal from dominating the
+#   richer CBLV representation.
+# - Together, CNN (96) + aux (32) = 128-dim node embedding. After GAT
+#   concatenation of self + aggregated neighbor, the 256-dim representation
+#   is halved through a 3-layer classifier (128->64->32->1) to smoothly
+#   compress spatial context into per-node predictions.
+# - The attention dimension (16) is kept small because edge features are only
+#   3-dimensional (DTW distance, lag mean, lag std); a larger attention MLP
+#   would overfit these few features.
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
     # CNN encoder branches for CBLV (phylogenetic) features
+    # Three branches capture complementary patterns from the CBLV matrix:
+    # - Plain: standard convolutions for local feature extraction
+    # - Stride: strided convolutions for hierarchical / multi-scale patterns
+    # - Dilate: dilated convolutions for long-range dependencies
     # Output: 48 + 24 + 24 = 96 per node (+ 32-dim aux branch = 128 total)
-    'phy_channel_plain': [12, 24, 48],    # 3 layers, ends at 48
-    'phy_channel_stride': [12, 24],        # 2 layers, ends at 24
-    'phy_channel_dilate': [12, 24],        # 2 layers, ends at 24
+    'phy_channel_plain': [12, 24, 48],    # 3 layers, widest -- captures most detail
+    'phy_channel_stride': [12, 24],        # 2 layers, narrower -- coarser hierarchy
+    'phy_channel_dilate': [12, 24],        # 2 layers, narrower -- sparse receptive field
 
-    'phy_kernel_plain': [3, 5, 7],
-    'phy_kernel_stride': [7, 9],
-    'phy_kernel_dilate': [3, 5],
+    'phy_kernel_plain': [3, 5, 7],         # Increasing kernel sizes for growing receptive field
+    'phy_kernel_stride': [7, 9],           # Larger kernels pair with strides for downsampling
+    'phy_kernel_dilate': [3, 5],           # Smaller kernels; dilation expands effective field
 
-    'phy_stride_stride': [3, 6],
-    'phy_dilate_dilate': [3, 5],
+    'phy_stride_stride': [3, 6],           # Aggressive downsampling to compress temporal axis
+    'phy_dilate_dilate': [3, 5],           # Dilation factors widen receptive field without pooling
 
-    # Aux branch: MLP on 5 tree statistics
+    # Aux branch: MLP on 5 tree statistics (mrca_depth, earliest/latest tip
+    # times, avg branch length, n_tips). Kept small to avoid dominating CBLV.
     'aux_hidden': 64,    # Hidden layer dimension
-    'aux_output': 32,    # Output dimension
+    'aux_output': 32,    # Output dimension (contributes 32 of the 128-dim node embedding)
 
-    # GAT layer
+    # GAT layer -- edge-attention mechanism using DTW-derived features
     'edge_dim': 3,      # DTW features: distance, lag_mean, lag_std
-    'attn_dim': 16,     # Attention hidden dimension
+    'attn_dim': 16,     # Attention hidden dimension (small; only 3 input features)
 
     # Classifier: 256 -> 128 -> 64 -> 32 -> 1
-    # Input is 256-dim: 128 (96 CNN + 32 aux) * 2 (self + neighbor_agg)
+    # Input is 256-dim: 128 (96 CNN + 32 aux) * 2 (self + neighbor_agg from GAT)
+    # Gradual compression avoids information bottleneck
     'lbl_channel': [128, 64, 32],
 
     # Activation

@@ -103,7 +103,11 @@ def read_newick(filepath):
 def check_tip_counts(newick, min_tips=10):
     """Return True if every location has more than *min_tips* sampled tips.
 
-    Operates on the label-embedded Newick via regex — no tree parsing needed.
+    Operates on the label-embedded Newick via regex -- no tree parsing needed.
+
+    NOTE: The default *min_tips* value (10) is coupled with the MIN_TIPS
+    variable in simulate_and_extract.sh, which passes it explicitly when
+    calling process_simulation().  Keep the two in sync.
     """
     counts = Counter(int(m.group(1)) for m in TIP_LOC_PATTERN.finditer(newick))
     return bool(counts) and all(c > min_tips for c in counts.values())
@@ -159,11 +163,23 @@ def load_trajectory(traj_file):
 
     Returns a pandas DataFrame with columns ``Sample``, ``t``, and one column
     per species (e.g. ``I[0]``, ``S[1]``, ``R``).
+
+    Implementation note -- polars/pandas hybrid:
+        Polars is used for the initial read and pivot because its eager
+        ``pivot()`` is significantly faster than pandas ``pivot_table()``
+        on the large, long-format trajectory files.  The result is
+        converted to pandas (``.to_pandas()``) at the end because all
+        downstream feature-extraction code (classify_events, epidemic
+        peaks, etc.) relies on pandas indexing (e.g. ``.idxmax()``,
+        ``.diff()``).
     """
+    # -- Polars: fast read + pivot --
     df = pl.read_csv(traj_file, separator='\t')
     if df.is_empty():
         raise ValueError(f"Trajectory file '{traj_file}' is empty")
 
+    # Build a composite species label, e.g. "I[0]", "S[1]", while
+    # leaving scalar compartments ("R", "sample") as-is.
     df = df.with_columns(
         pl.when(pl.col('population').is_in(['R', 'sample']))
         .then(pl.col('population'))
@@ -173,6 +189,7 @@ def load_trajectory(traj_file):
         )
         .alias('species')
     )
+    # -- Convert to pandas for downstream compatibility --
     return (
         df.pivot(on='species', index=['Sample', 't'], values='value')
         .fill_null(0)
@@ -340,7 +357,19 @@ def calculate_node_metrics(event_counts, num_nodes):
 def process_simulation(tree_file, traj_file, param_file, output_file, min_tips=10):
     """Process one simulation end-to-end.
 
-    Returns one of: 'processed', 'skipped', 'error'.
+    Reads the tree, checks the tip-count filter, extracts epidemic features
+    from the trajectory and parameter files, and writes a merged CSV.
+
+    Args:
+        tree_file:   Path to the BEAST2 .trees file.
+        traj_file:   Path to the BEAST2 .traj file.
+        param_file:  Path to the parameter CSV.
+        output_file: Path to write the output _nf.csv.
+        min_tips:    Minimum tips per location (default 10).
+                     NOTE: coupled with MIN_TIPS in simulate_and_extract.sh.
+
+    Returns:
+        One of: 'processed', 'skipped', 'error'.
     """
     try:
         # --- Tree: filter by tip count, then extract ancestral label ---
@@ -401,6 +430,7 @@ def process_simulation(tree_file, traj_file, param_file, output_file, min_tips=1
 # ---------------------------------------------------------------------------
 
 def main():
+    """CLI entry point: discover tree files and run process_simulation on each."""
     parser = argparse.ArgumentParser(
         description='Characterize outbreaks: extract node features and ancestral labels',
     )

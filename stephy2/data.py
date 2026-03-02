@@ -2,7 +2,11 @@
 """
 Data Loading and Preprocessing for STEPHY2 (Phylogeny-only Model + Aux Branch).
 
-Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
+Handles data loading and graph construction for the STEPHY GAT model with DTW
+edge features. Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv),
+encodes per-location tree topology via CBLV (Compact Branch-Length Vector),
+computes DTW-based edge features from KDE-smoothed epidemic curves, and
+assembles everything into DGL graphs.
 """
 
 import re
@@ -67,7 +71,16 @@ def is_sample(node):
 # ==============================================================================
 
 class VirtualSubtreeEncoder:
-    """CBLV encoder using virtual subtree traversal (no tree copying)."""
+    """
+    CBLV encoder using virtual subtree traversal (no tree copying).
+
+    For each location, performs a virtual in-order traversal of the full tree,
+    visiting only nodes belonging to that location's subtree. This avoids the
+    cost of copying/pruning the tree for each location. Produces a
+    (subtree_width, 4) matrix encoding branch lengths, node depths, and
+    accumulated edge lengths, plus 5 auxiliary statistics (MRCA depth,
+    earliest/latest tip times, average branch length, tip count).
+    """
 
     def __init__(self, phy, tree_height):
         self.phy = phy
@@ -226,7 +239,12 @@ class VirtualSubtreeEncoder:
 # ==============================================================================
 
 def extract_tip_times(tree_file, tree_idx=0):
-    """Extract tip sampling times grouped by location from BEAST2 tree file."""
+    """
+    Extract tip sampling times grouped by location from a BEAST2 tree file.
+
+    Parses the raw NEXUS tree string with regex to find annotated sample tips,
+    returning a dict mapping location ID to list of sampling times.
+    """
     with open(tree_file) as f:
         trees = parse_trees(f.read())
     if not trees or tree_idx >= len(trees):
@@ -239,7 +257,13 @@ def extract_tip_times(tree_file, tree_idx=0):
 
 
 def tips_to_curves(tips_by_loc, num_points=None):
-    """Convert tip times to KDE-smoothed epidemic curves."""
+    """
+    Convert tip sampling times to KDE-smoothed epidemic curves.
+
+    Uses Gaussian KDE to produce a smooth density estimate for each location,
+    evaluated on a shared time grid. Locations with fewer than 2 tips get a
+    zero curve. Returns the curves dict and the time step (dt) for lag scaling.
+    """
     if num_points is None:
         num_points = DATA_ARGS['dtw_num_points']
     all_times = [t for times in tips_by_loc.values() for t in times]
@@ -318,7 +342,13 @@ def dtw_with_lag(curve_a, curve_b):
 
 
 def compute_dtw_edge_features(tree_file, tree_idx=0):
-    """Compute DTW-based edge features for all location pairs."""
+    """
+    Compute DTW-based edge features for all ordered location pairs.
+
+    For each pair (i, j) where i != j, computes three features:
+    DTW distance, lag mean (scaled by dt), and lag std (scaled by dt).
+    Returns source/dest index lists, feature array, and sorted location IDs.
+    """
     tips_by_loc = extract_tip_times(tree_file, tree_idx)
     if not tips_by_loc:
         return None, None, None, []
@@ -387,12 +417,17 @@ def load_labels(input_folder, file_prefix, num_nodes):
 
 def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tree_height'):
     """
-    Build a single DGL graph from a tree.
+    Build a single DGL graph from a BEAST2 tree.
+
+    Constructs a fully connected graph (no self-loops) where each node is a
+    geographic location. Node features are CBLV matrices (4, subtree_width) plus
+    5-dim auxiliary stats. Edge features are DTW-derived (distance, lag_mean,
+    lag_std). Labels are loaded from the corresponding *_nf.csv file.
 
     Returns:
-        g: DGL graph with node/edge features
-        locations: List of location IDs
-        tree_height: Height of the tree
+        g: DGL graph with node features (cblv, aux, labels) and edge features
+        locations: Sorted list of location IDs
+        tree_height: Height of the tree (max root distance among leaves)
     """
     phy = load_tree(tree_file, tree_idx)
     tree_height = max(nd.root_distance for nd in phy.leaf_node_iter())
@@ -439,7 +474,11 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tr
 
 def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees', verbose=True, cblv_scale='tree_height'):
     """
-    Build DGL graphs from all trees in folder.
+    Build DGL graphs from all BEAST2 tree files in a folder.
+
+    Iterates over all matching tree files, and for each file processes every
+    tree (some files contain multiple posterior trees). Errors on individual
+    trees are caught and reported rather than aborting the entire batch.
 
     Returns:
         List of (graph, graph_id, locations, tree_height) tuples

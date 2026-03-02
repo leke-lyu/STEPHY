@@ -1,6 +1,14 @@
 #!/bin/bash
 #
-# CBLV-GAT2 Pipeline: Standard GAT (Node-Based Attention)
+# CBLV-GAT2 end-to-end pipeline: Standard GAT baseline (node-based attention).
+#
+# For each input folder this script:
+#   1. Analyzes BEAST2 tree files to determine num_locations and subtree_width.
+#   2. Builds DGL graphs (CBLV node features, fully connected with self-loops,
+#      no DTW edge features) and saves them as graphs.pt.
+#   3. Trains four single-task models (R0, Recovery_Rate, Source_Sink_Score,
+#      Ancestral_State) using the standard GATConv architecture.
+#
 # Usage: bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
 
 set -e

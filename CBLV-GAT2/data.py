@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for CBLV-GAT2 (Standard GAT, No Edge Features).
+Data loading and graph construction for the CBLV-GAT baseline.
 
-Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
-No DTW edge features — standard GAT uses node-based attention.
+This module builds fully-connected DGL graphs (with self-loops) from BEAST2
+phylogenetic trees.  Each node represents a geographic location and carries a
+CBLV (Compact Branch-Length Vector) feature matrix plus auxiliary tree
+statistics.  Unlike the stephy2 pipeline, no DTW edge features are computed --
+the standard GAT in model.py derives attention weights from node embeddings
+alone.
+
+Input files:
+    *_beast2.trees  -- BEAST2 NEXUS tree files
+    *_nf.csv        -- Per-location labels (R0, Source_Sink_Score, etc.)
 """
 
 import numpy as np
@@ -289,7 +297,8 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tr
     # Transpose to (n_nodes, 4, subtree_width) for Conv1d
     node_cblv = np.transpose(node_cblv, (0, 2, 1))
 
-    # Fully connected graph with self-loops (for standard GAT)
+    # Fully connected graph **with self-loops** (N^2 edges for N nodes).
+    # Self-loops let each node attend to its own embedding in the standard GAT.
     src = [i for i in range(n_nodes) for _ in range(n_nodes)]
     dst = [j for _ in range(n_nodes) for j in range(n_nodes)]
 

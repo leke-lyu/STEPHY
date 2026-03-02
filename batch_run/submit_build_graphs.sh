@@ -1,13 +1,22 @@
 #!/bin/bash
+# ==============================================================================
+# Submit parallel graph-building jobs via SLURM array.
+#
+# This script serves double duty:
+#   1. Submission mode (no SLURM_ARRAY_TASK_ID): counts batch_* folders under
+#      <data_dir>, creates the output directory, and submits itself as a SLURM
+#      array job (one task per batch).
+#   2. Execution mode (inside a SLURM task): activates the conda environment
+#      and runs build_graphs.py for the assigned batch.
+#
+# Usage: bash submit_build_graphs.sh <data_dir> <subtree_width>
+# Output: <data_dir>_result/batch_*_graphs.pt  (one file per batch)
+# ==============================================================================
 #SBATCH --job-name=build_graphs
 #SBATCH --partition=lau
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 #SBATCH --time=96:00:00
-
-# Build graphs.pt per batch via SLURM array.
-# Usage: bash submit_build_graphs.sh <data_dir> <subtree_width>
-# Output: batch_*_graphs.pt in the output directory
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 

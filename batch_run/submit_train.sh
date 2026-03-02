@@ -1,13 +1,23 @@
 #!/bin/bash
+# ==============================================================================
+# Submit training jobs for all pipeline x label combinations via SLURM array.
+#
+# Launches 12 parallel SLURM tasks (3 pipelines x 4 labels).  Each task
+# invokes the corresponding pipeline's train.py with the shared graphs.pt.
+#
+# Array index mapping:
+#   task_id = pipeline_idx * 4 + label_idx
+#   Pipelines: stephy2(0), CBLV-CNN2(1), CBLV-GAT2(2)
+#   Labels:    R0(0), Recovery_Rate(1), Source_Sink_Score(2), Ancestral_State(3)
+#
+# Usage: bash submit_train.sh <graphs.pt> <num_locations>
+# Output: <graphs_dir>/<pipeline>/<label_short>/
+# ==============================================================================
 #SBATCH --job-name=train
 #SBATCH --partition=lau
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=24G
 #SBATCH --time=96:00:00
-
-# Train 3 pipelines x 4 labels = 12 jobs via SLURM array.
-# Usage: bash submit_train.sh <graphs.pt> <num_locations>
-# Output: <graphs_dir>/<pipeline>/<label_short>/
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 

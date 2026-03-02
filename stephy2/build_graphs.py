@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Build and save DGL graphs for STEPHY."""
+"""
+Build and save DGL graphs for STEPHY.
+
+Step 2 of the pipeline: reads BEAST2 tree files and corresponding label CSVs
+from an input directory, constructs fully connected DGL graphs with CBLV node
+features and DTW edge features, and serializes them to a .pt file for training.
+
+Usage:
+    python3 build_graphs.py --input_dir <dir> --subtree_width <int> --output <path>
+"""
 
 import argparse
 from pathlib import Path

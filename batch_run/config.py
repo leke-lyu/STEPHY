@@ -5,6 +5,10 @@ Configuration for STEPHY2 (Phylogeny-only Model).
 Uses phylogenetic (CBLV) + auxiliary tree statistics for spatial transmission estimation.
 Node embedding: 96-dim CNN (48+24+24) + 32-dim aux branch = 128-dim.
 
+This config is a copy of stephy2/config.py used by the batch_run pipeline.
+It is duplicated (rather than imported) so that batch_run/ can be deployed
+to HPC nodes as a self-contained directory without path manipulation.
+
 Output files:
 - training_history.csv: Loss in NORMALIZED scale (what optimizer sees)
 - test_predictions.csv: Predictions in TRUE scale (for interpretation)
@@ -12,10 +16,19 @@ Output files:
 """
 
 # Model architecture
+# ------------------
+# These parameters define the stephy2 CBLV-GAT architecture.  The same config
+# is shared by all three pipelines (stephy2, CBLV-CNN2, CBLV-GAT2) via their
+# respective get_config() functions; each pipeline's model.py selects the
+# subset of keys it needs.
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
     # CNN encoder branches for CBLV (phylogenetic) features
+    # Three parallel Conv1d paths capture different temporal resolutions:
+    #   - Plain:  local detail (small kernels, no stride/dilation)
+    #   - Stride: coarse down-sampling (large kernels + stride)
+    #   - Dilate: wide receptive field without down-sampling
     # Output: 48 + 24 + 24 = 96 per node (+ 32-dim aux branch = 128 total)
     'phy_channel_plain': [12, 24, 48],    # 3 layers, ends at 48
     'phy_channel_stride': [12, 24],        # 2 layers, ends at 24
@@ -32,7 +45,7 @@ MODEL_ARGS = {
     'aux_hidden': 64,    # Hidden layer dimension
     'aux_output': 32,    # Output dimension
 
-    # GAT layer
+    # GAT layer (stephy2 only; CBLV-GAT2 uses dgl.nn.GATConv instead)
     'edge_dim': 3,      # DTW features: distance, lag_mean, lag_std
     'attn_dim': 16,     # Attention hidden dimension
 

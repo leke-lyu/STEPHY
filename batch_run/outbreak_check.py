@@ -5,6 +5,9 @@ Recursively finds *_beast2.trees under the input folder, supporting:
     folder/*_beast2.trees           (single batch)
     folder/batch_*/*_beast2.trees   (multi-batch)
 
+Reports min/max/mean statistics and recommends --num_locations and
+--subtree_width parameters for the build_graphs step.
+
 Usage:
     python3 outbreak_check.py /path/to/epidata/folder [SUB_TOP_PCT]
 
@@ -24,6 +27,10 @@ TREE_RE = re.compile(r'tree STATE_\d+ = (.+?)(?=\ntree |\nEnd;|$)', re.DOTALL)
 TIP_RE  = re.compile(r'\d+\[&type="I\{(\d+)\}",samp="sample"')
 
 
+# NOTE: This parse_trees() duplicates regex logic from beast2_parser.py but has
+# a different interface — it walks the filesystem (takes a root directory path)
+# and returns per-tree statistics, whereas beast2_parser.parse_trees() operates
+# on in-memory file content and returns raw tree strings.
 def parse_trees(root):
     """Parse all *_beast2.trees files under `root`.
 
@@ -44,7 +51,7 @@ def parse_trees(root):
 
 
 def print_stats(stats):
-    """Print min/max/mean for tree_width and subtree_width."""
+    """Print min/max/mean for tree_width (total tips) and subtree_width (tips per location)."""
     sizes = np.array([s[1] for s in stats])
     min_t = min(stats, key=lambda s: s[1])
     max_t = max(stats, key=lambda s: s[1])
@@ -63,6 +70,7 @@ def print_stats(stats):
 
 
 def main():
+    """CLI entry point: parse args, load trees, print summary, and recommend parameters."""
     if len(sys.argv) < 2:
         print('Usage: python3 outbreak_check.py /path/to/epidata/folder [SUB_TOP_PCT]')
         sys.exit(1)

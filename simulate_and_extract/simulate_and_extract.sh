@@ -64,7 +64,13 @@ SIM_TIME_MAX=18
 TIME_UNITS="recovery_period"      # "recovery_period" or "arbitrary"
 
 # Misc
-RANDOM_SEED="None"                # "None" = random, or integer
+RANDOM_SEED="None"                # "None" = random (OS entropy), or integer for
+                                  # single-batch reproducibility.
+                                  # WARNING: A fixed seed makes EVERY call to
+                                  # xml_generation.py produce identical parameters.
+                                  # When running multiple batches via submit.sh,
+                                  # keep this set to "None" so each batch draws
+                                  # independent random parameters.
 NUM_SIMS=1
 
 # Tip-count filter: every location must have more than this many tips
@@ -73,7 +79,32 @@ MIN_TIPS=10
 # Safety: abort if a single index fails this many times in a row
 MAX_ATTEMPTS_PER_OUTBREAK=50
 
-# Export for xml_generation.py
+# ============================================================
+# EXPORTED ENVIRONMENT VARIABLES
+# ============================================================
+# The variables below are exported so that xml_generation.py
+# can read them via os.getenv().  They map 1:1 to the CONFIG
+# dict built at the top of xml_generation.py.
+#
+#   NUM_LOCS              Number of discrete locations
+#   POP_MIN / POP_MAX     Population-size range per location
+#   SHARED_POP_SIZE       If "true", all locations share one population size
+#   SEED_LOCATION         Index of the epidemic seed location ("None" = random)
+#   R0_MIN / R0_MAX       Basic reproduction number range
+#   SHARED_R0             If "true", all locations share one R0
+#   MAX_R0_DIFF           Max pairwise R0 difference (heterogeneous mode)
+#   MU_MIN / MU_MAX       Recovery-rate range
+#   SHARED_RECOVERY_RATE  If "true", all locations share one recovery rate
+#   MAX_MU_DIFF           Max pairwise recovery-rate difference
+#   SAMPLE_MIN / SAMPLE_MAX   Sampling-rate range (shared across locations)
+#   MIGRATION_MIN / MIGRATION_MAX   Migration-rate range
+#   SHARED_MIGRATION_RATE If "true", all location pairs share one rate
+#   SIM_TIME_MIN / SIM_TIME_MAX   Simulation-time range
+#   TIME_UNITS            "recovery_period" or "arbitrary"
+#   RANDOM_SEED           Seed for NumPy RNG ("None" = OS entropy per process;
+#                         must be "None" for multi-batch runs via submit.sh)
+#   NUM_SIMS              Number of BEAST2 simulations per XML (always 1 here)
+# ============================================================
 export NUM_LOCS SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
 export POP_MIN POP_MAX SHARED_POP_SIZE
 export R0_MIN R0_MAX SHARED_R0 MAX_R0_DIFF
@@ -102,7 +133,6 @@ OUTPUT_DIR=${2:-.}
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UTILS_DIR="$SCRIPT_DIR/../utils"
 
 mkdir -p "$OUTPUT_DIR/logs"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -143,7 +173,7 @@ while [ $success_count -lt $TARGET ]; do
 
     # Step 1: Generate parameters + XML
     if $step_ok; then
-        python3 "$UTILS_DIR/xml_generation.py" "$xml_file" "$param_file" \
+        python3 "$SCRIPT_DIR/xml_generation.py" "$xml_file" "$param_file" \
             > "$log_file" 2>&1 || step_ok=false
     fi
 
@@ -154,7 +184,7 @@ while [ $success_count -lt $TARGET ]; do
 
     # Step 3: Clean tree file
     if $step_ok; then
-        bash "$UTILS_DIR/edit_tree.sh" "$tree_file" >> "$log_file" 2>&1
+        bash "$SCRIPT_DIR/edit_tree.sh" "$tree_file" >> "$log_file" 2>&1
     fi
 
     # Step 4: Tip-count filter + feature extraction
@@ -162,7 +192,7 @@ while [ $success_count -lt $TARGET ]; do
     if $step_ok; then
         python3 -c "
 import sys, pathlib
-sys.path.insert(0, '$UTILS_DIR')
+sys.path.insert(0, '$SCRIPT_DIR')
 from characterizing_outbreak import process_simulation
 result = process_simulation(
     pathlib.Path('$tree_file'), pathlib.Path('$traj_file'),

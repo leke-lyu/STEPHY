@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Analyze BEAST2 tree files to get parameters for train.py.
+Analyze BEAST2 tree files to determine graph-building parameters.
+
+Parses ``*_beast2.trees`` files in a given folder and reports the number of
+distinct locations (``num_locations``) and the maximum number of tips belonging
+to any single location across all trees (``subtree_width``).  These two values
+are required by ``build_graphs.py`` and ``train.py``.
 
 Usage:
     python3 analyze_trees.py /path/to/epidata/folder
-
-Output values needed for train.py:
-    --num_locations: Number of locations
-    --subtree_width: Max tips per location (use max value)
 """
 
 import sys

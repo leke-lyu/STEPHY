@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Merge per-batch graphs.pt files into a single graphs.pt."""
+"""Merge per-batch graphs.pt files into a single graphs.pt.
+
+After submit_build_graphs.sh produces one batch_*_graphs.pt per SLURM array
+task, this script concatenates them into a single graphs.pt used by training
+and evaluation.
+"""
 
 import argparse
 from pathlib import Path

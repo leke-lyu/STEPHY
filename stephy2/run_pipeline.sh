@@ -1,6 +1,17 @@
 #!/bin/bash
 #
-# STEPHY Pipeline: Phylogeny-only Model
+# STEPHY Pipeline: End-to-end phylogeny-only spatial transmission estimation.
+#
+# Runs three steps for each input dataset folder:
+#   1. analyze_trees.py  -- Inspect BEAST2 tree files to determine num_locations
+#                           and subtree_width (max tips per location).
+#   2. build_graphs.py   -- Construct DGL graphs with CBLV node features, DTW
+#                           edge features, and labels from *_nf.csv files.
+#                           Saves a single graphs.pt per dataset.
+#   3. train.py          -- Train four single-task CBLV-GAT models (R0,
+#                           Recovery_Rate, Source_Sink_Score, Ancestral_State),
+#                           each with its own output subdirectory.
+#
 # Usage: bash run_pipeline.sh inputfolder_0 [inputfolder_1 ...] outfolder
 
 set -e

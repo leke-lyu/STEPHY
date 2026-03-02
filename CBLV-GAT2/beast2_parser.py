@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-BEAST2 tree file parsing utilities.
+Lightweight BEAST2 NEXUS tree file parser (regex-based).
 
-Lightweight module with no heavy dependencies (torch, dgl, etc.)
-so it can be used by both analyze_trees.py and data.py.
+Extracts or counts individual tree strings from BEAST2 ``*_beast2.trees``
+files without importing heavy dependencies (torch, dgl, dendropy).  Used by
+both ``analyze_trees.py`` (analysis only) and ``data.py`` (graph construction).
 """
 
 import re

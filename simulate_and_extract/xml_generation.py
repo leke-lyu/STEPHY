@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Epidemic Parameter Generator and BEAST2 XML Configuration Tool
+BEAST2 XML Configuration File Generator
 
-Generates random epidemic parameters and creates ReMaster simulation XML files.
-All parameters MUST be provided via environment variables set by 0_simulations.sh.
+Generates random epidemic parameters (R0, recovery rate, migration, etc.)
+and writes a BEAST2/ReMaster simulation XML configuration file.  Optionally
+saves the drawn parameters to a companion CSV for downstream analysis.
+
+All tuneable ranges are supplied via environment variables that
+simulate_and_extract.sh exports before calling this script.
 
 USAGE:
     python3 xml_generation.py <output.xml> [parameters.csv]
 
 NOTE:
-    This script requires all environment variables to be set by 0_simulations.sh.
-    It cannot be run standalone without these environment variables.
+    This script requires all environment variables to be set by
+    simulate_and_extract.sh.  It cannot be run standalone without them.
 """
 
 import numpy as np
@@ -93,7 +97,7 @@ CONFIG = {
 # PARAMETER GENERATION FUNCTIONS
 # ============================================================
 
-def generate_constrained_values(num_locs, value_range, max_diff, seed=None):
+def generate_constrained_values(num_locs, value_range, max_diff):
     """
     Generate random values with constraint on maximum difference between values.
 
@@ -103,18 +107,16 @@ def generate_constrained_values(num_locs, value_range, max_diff, seed=None):
         3. Generate values within max_diff of anchor
         This avoids bias toward the midpoint.
 
+    Note: Relies on np.random seed being set once by generate_parameters().
+
     Args:
         num_locs: Number of locations
         value_range: Tuple of (min, max) for allowed values
         max_diff: Maximum allowed difference between any two values
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Array of constrained random values
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     # Calculate feasible range for the anchor point
     # The anchor must allow max_diff spread in both directions
     feasible_min = max(value_range[0], value_range[0] + max_diff / 2)
@@ -136,22 +138,20 @@ def generate_constrained_values(num_locs, value_range, max_diff, seed=None):
 
     return values
 
-def population_sizes(num_locs, pop_range, shared=False, seed=None):
+def population_sizes(num_locs, pop_range, shared=False):
     """
     Generate population sizes for each location.
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         num_locs: Number of locations
         pop_range: Tuple of (min, max) population size
         shared: If True, all locations have same population
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Array of integer population sizes
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     if shared:
         single_pop = np.random.uniform(pop_range[0], pop_range[1])
         pop_sizes = np.full(num_locs, single_pop)
@@ -160,14 +160,15 @@ def population_sizes(num_locs, pop_range, shared=False, seed=None):
 
     return pop_sizes.astype(int)
 
-def seed_location(num_locs, seed_loc=None, seed=None):
+def seed_location(num_locs, seed_loc=None):
     """
     Generate one-hot encoded seed location (where epidemic starts).
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         num_locs: Number of locations
         seed_loc: Specific location to seed (optional, if None chooses random)
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         One-hot encoded array indicating seed location
@@ -175,9 +176,6 @@ def seed_location(num_locs, seed_loc=None, seed=None):
     Raises:
         ValueError: If seed_loc is out of bounds
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     seed_array = np.zeros(num_locs, dtype=int)
 
     if seed_loc is None:
@@ -190,89 +188,81 @@ def seed_location(num_locs, seed_loc=None, seed=None):
     seed_array[selected_location] = 1
     return seed_array
 
-def R0_values(num_locs, R0_range, shared=False, max_diff=None, seed=None):
+def R0_values(num_locs, R0_range, shared=False, max_diff=None):
     """
     Generate R0 values (basic reproduction number) for locations.
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         num_locs: Number of locations
         R0_range: Tuple of (min, max) R0 values
         shared: If True, all locations have same R0
         max_diff: Maximum difference in R0 across locations (optional)
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Array of R0 values
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     if shared:
         single_R0 = np.random.uniform(R0_range[0], R0_range[1])
         R0_array = np.full(num_locs, single_R0)
     else:
-        R0_array = generate_constrained_values(num_locs, R0_range, max_diff, seed)
+        R0_array = generate_constrained_values(num_locs, R0_range, max_diff)
 
     return R0_array
 
-def recovery_rate(num_locs, mu_range, shared=False, max_diff=None, seed=None):
+def recovery_rate(num_locs, mu_range, shared=False, max_diff=None):
     """
     Generate recovery rates (mu) for locations.
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         num_locs: Number of locations
         mu_range: Tuple of (min, max) recovery rates
         shared: If True, all locations have same recovery rate
         max_diff: Maximum difference in recovery rates across locations (optional)
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Array of recovery rates
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     if shared:
         single_mu = np.random.uniform(mu_range[0], mu_range[1])
         mu_values = np.full(num_locs, single_mu)
     else:
-        mu_values = generate_constrained_values(num_locs, mu_range, max_diff, seed)
+        mu_values = generate_constrained_values(num_locs, mu_range, max_diff)
 
     return mu_values
 
-def sample_rate(sample_range, seed=None):
+def sample_rate(sample_range):
     """
     Generate sampling rate (single shared value for all locations).
 
+    Note: Relies on np.random seed being set once by generate_parameters().
+
     Args:
         sample_range: Tuple of (min, max) sampling rate
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Single sampling rate value
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     return np.random.uniform(sample_range[0], sample_range[1])
 
-def migration_rates(num_locs, migration_range, shared=False, seed=None):
+def migration_rates(num_locs, migration_range, shared=False):
     """
     Generate migration rates between locations as a matrix.
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         num_locs: Number of locations
         migration_range: Tuple of (min, max) migration rates
         shared: If True, all location pairs have same migration rate
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Matrix of migration rates (i,j) = rate from location i to j
         Diagonal elements are 0 (no self-migration)
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     migration_matrix = np.zeros((num_locs, num_locs))
 
     if shared:
@@ -289,22 +279,20 @@ def migration_rates(num_locs, migration_range, shared=False, seed=None):
 
     return migration_matrix
 
-def simulation_time(mu_values, sim_time_range, time_units='recovery_period', seed=None):
+def simulation_time(mu_values, sim_time_range, time_units='recovery_period'):
     """
     Generate simulation time.
+
+    Note: Relies on np.random seed being set once by generate_parameters().
 
     Args:
         mu_values: Array of recovery rates
         sim_time_range: Tuple of (min, max) simulation time
         time_units: 'recovery_period' (scaled by 1/mean(mu)) or 'arbitrary' (absolute)
-        seed: Random seed for reproducibility (optional)
 
     Returns:
         Simulation time value
     """
-    if seed is not None:
-        np.random.seed(seed)
-
     raw_sim_time = np.random.uniform(sim_time_range[0], sim_time_range[1])
 
     if time_units == 'recovery_period':
@@ -457,38 +445,43 @@ def generate_parameters(config):
         Tuple of (pop_sizes, seed_number, R0_array, mu_values, sample_rate_value,
                   beta_value, migration_rates_data, sim_time)
     """
+    # Set the random seed once for the entire parameter-generation run.
+    # Individual parameter functions no longer reset the seed themselves.
+    if config['seed'] is not None:
+        np.random.seed(config['seed'])
+
     # Generate parameters
     pop_sizes = population_sizes(
         config['num_locs'], config['pop_range'],
-        config['shared_pop_size'], config['seed']
+        config['shared_pop_size'],
     )
 
     seed_number = seed_location(
-        config['num_locs'], config['seed_location'], config['seed']
+        config['num_locs'], config['seed_location'],
     )
 
     R0_array = R0_values(
         config['num_locs'], config['R0_range'],
-        config['shared_R0'], config['max_R0_diff'], config['seed']
+        config['shared_R0'], config['max_R0_diff'],
     )
 
     mu_values = recovery_rate(
         config['num_locs'], config['mu_range'],
-        config['shared_recovery_rate'], config['max_mu_diff'], config['seed']
+        config['shared_recovery_rate'], config['max_mu_diff'],
     )
 
-    sample_rate_value = sample_rate(config['sample_range'], config['seed'])
+    sample_rate_value = sample_rate(config['sample_range'])
 
     beta_value = R0_array * (mu_values + sample_rate_value) / pop_sizes
 
     migration_rates_data = migration_rates(
         config['num_locs'], config['migration_range'],
-        config['shared_migration_rate'], config['seed']
+        config['shared_migration_rate'],
     )
 
     sim_time = simulation_time(
         mu_values, config['sim_time_range'],
-        config['time_units'], config['seed']
+        config['time_units'],
     )
 
     return pop_sizes, seed_number, R0_array, mu_values, sample_rate_value, beta_value, migration_rates_data, sim_time

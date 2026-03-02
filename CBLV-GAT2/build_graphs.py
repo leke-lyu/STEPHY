@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Build and save DGL graphs for CBLV-GAT2."""
+"""
+Build and serialize DGL graphs for CBLV-GAT2.
+
+Reads all ``*_beast2.trees`` and corresponding ``*_nf.csv`` files from the
+input directory, constructs fully-connected DGL graphs with CBLV node features
+(and self-loops), and saves them as a single ``graphs.pt`` file for use by
+``train.py``.
+"""
 
 import argparse
 from pathlib import Path

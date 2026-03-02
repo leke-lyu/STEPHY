@@ -37,7 +37,11 @@ def set_seed(seed):
 
 
 def normalize_aux_features(train_graphs, val_graphs, test_graphs):
-    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats)."""
+    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats).
+
+    Note: No edge normalization — intentional for this CNN ablation baseline,
+    which has no edges or graph structure.
+    """
     train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)
 
     # Log transform (clamp to avoid log(0))

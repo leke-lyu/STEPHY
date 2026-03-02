@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Training script for CBLV-GAT2 (Standard GAT, No Edge Features).
+Training script for the CBLV-GAT2 baseline (standard GAT, no edge features).
 
-Requires precomputed graphs from build_graphs.py.
+Loads precomputed DGL graphs from ``build_graphs.py``, adds self-loops at load
+time (via ``dgl.add_self_loop``) so that graphs.pt files from stephy2 can be
+reused directly, then trains a single-task CBLV_GAT model for the requested
+label target.
+
+Supports both regression (R0, Recovery_Rate, Source_Sink_Score) and
+classification (Ancestral_State).
 """
 
 import argparse
@@ -160,9 +166,11 @@ def main():
     args = parse_args()
     config = get_config()
 
-    # Load graphs
+    # Load graphs and ensure self-loops exist.
+    # Self-loops are required by standard GATConv so each node can attend to
+    # itself.  Adding them here (idempotent via dgl.add_self_loop) also lets
+    # us reuse graphs.pt files built by stephy2 without rebuilding.
     all_graphs = torch.load(args.graphs, weights_only=False)
-    # Ensure self-loops exist (allows reusing graphs.pt from stephy2)
     all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 

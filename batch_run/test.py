@@ -3,7 +3,9 @@
 Test trained models on a new dataset.
 
 Evaluates all 12 pipeline x label combinations (3 pipelines x 4 labels)
-using pre-trained models from a result directory.
+using pre-trained models from a result directory.  For each combination,
+loads the saved model and normalization parameters, applies them to the
+test graphs, and writes per-combination predictions plus an overall summary.
 
 Usage:
     python3 test.py --graphs <graphs.pt> --model_dir <result_dir> --num_locations <N>
@@ -75,7 +77,7 @@ def get_model_and_config(pipeline):
 # ---------------------------------------------------------------------------
 
 def normalize_aux(graphs, params):
-    """Log-transform and standardize auxiliary node features in-place."""
+    """Log-transform and z-score standardize auxiliary node features in-place."""
     mean, std = params['mean'], params['std']
     for g, *_ in graphs:
         g.ndata['aux'] = (torch.log(g.ndata['aux'].clamp(min=1e-8)) - mean) / std
@@ -216,7 +218,9 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
         print(f"    SKIP: {norm_file} not found")
         return None
 
-    # Deep copy so normalizations don't leak across combinations
+    # Deep copy so in-place normalizations (aux, edge, labels) applied for this
+    # pipeline x label combination don't leak into subsequent combinations.
+    # Each combination needs to start from the original un-normalized tensors.
     graphs = deepcopy(raw_graphs)
 
     # CBLV-GAT2: add self-loops (matches training)

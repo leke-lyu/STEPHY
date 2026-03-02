@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-CBLV-GAT2 Model: CBLV-CNN + Standard GAT (Node-Based Attention).
+CBLV-GAT2 model: CBLV-CNN encoder + standard GAT for per-node prediction.
+
+This module uses DGL's built-in ``GATConv`` (Velickovic et al. 2018), which
+computes attention weights purely from node embeddings.  This is the key
+difference from stephy2's ``GraphEdgeAttention``, where attention is driven by
+explicit edge features (DTW distance matrices).  Because no edge features are
+involved, self-loops are required so that each node can attend to itself.
 
 Node embedding: 96-dim CNN (48+24+24) + 32-dim aux branch = 128-dim.
 Standard GAT: 4 heads x 64-dim = 256-dim output.
@@ -143,17 +149,22 @@ class AuxBranch(nn.Module):
 
 class CBLV_GAT(nn.Module):
     """
-    CBLV-GAT2: CNN encoder + aux branch + standard GAT for single-task prediction.
+    CBLV-GAT2: CNN encoder + aux branch + standard GATConv for single-task prediction.
+
+    Uses DGL's ``GATConv`` (standard node-based attention), unlike stephy2 which
+    uses a custom ``GraphEdgeAttention`` layer that conditions attention on edge
+    features (DTW distances).  Here, attention is computed solely from the 128-dim
+    node embeddings produced by the CNN + aux branch.
 
     Architecture:
-    1. CNN encoder processes each node's CBLV independently -> 96-dim
-    2. Aux branch processes tree statistics -> 32-dim
-    3. Concat CNN + aux -> 128-dim node embedding
-    4. Standard GATConv (4 heads x 64-dim, node-based attention) -> 256-dim
-    5. Classifier predicts target label per node
+        1. CBLVConvEncoder: CBLV (4, subtree_width) -> 96-dim
+        2. AuxBranch: 5-dim tree stats -> 32-dim
+        3. Concat -> 128-dim node embedding
+        4. GATConv (4 heads x 64-dim, node-based attention) -> 256-dim
+        5. Classifier MLP: 256 -> 128 -> 64 -> 32 -> 1
 
     Args:
-        args: Config dict with model parameters
+        args: Config dict with model hyperparameters (see config.py).
     """
 
     def __init__(self, args):
