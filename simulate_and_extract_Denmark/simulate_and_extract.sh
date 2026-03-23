@@ -63,7 +63,7 @@ SHARED_MIGRATION_RATE=false
 
 # Simulation time (days, absolute)
 SIM_TIME_MIN=30
-SIM_TIME_MAX=330
+SIM_TIME_MAX=270
 TIME_UNITS="arbitrary"            # "recovery_period" or "arbitrary"
 
 # Early termination: stop simulation when sampled tips reach this count
