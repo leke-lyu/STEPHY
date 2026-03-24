@@ -25,6 +25,13 @@ STEPHY/
 │   ├── characterizing_outbreak.py  # Extract labels from simulation outputs
 │   ├── edit_tree.sh            # Strip unnecessary blocks from NEXUS files
 │   └── simulation_engine.pdf   # ReMaster simulation engine documentation
+├── simulate_and_extract_Denmark/  # Denmark-specific data generation
+│   ├── simulate_and_extract.sh # Main simulation loop (Denmark settings)
+│   ├── submit.sh               # SLURM array job wrapper for HPC
+│   ├── xml_generation.py       # Generate XML configs with Denmark parameters
+│   ├── characterizing_outbreak.py  # Extract labels from simulation outputs
+│   ├── edit_tree.sh            # Strip unnecessary blocks from NEXUS files
+│   └── r0_distribution_preview.png # Visualization of R0 Beta distribution
 ├── stephy2/                    # Primary model: CBLV-GAT with edge attention
 │   ├── run_pipeline.sh         # End-to-end orchestration script
 │   ├── analyze_trees.py        # Step 1: Determine num_locations and subtree_width
@@ -59,9 +66,12 @@ STEPHY/
 ## End-to-End Workflow
 
 ```
-simulate_and_extract/
+simulate_and_extract/                    simulate_and_extract_Denmark/
+(generic, 10 locations)                  (5 Danish regions, real populations)
+    │                                        │
     │  Generates: {id}_beast2.trees, {id}_nf.csv, {id}_parameter.csv
-    ▼
+    └──────────────────┬─────────────────────┘
+                       ▼
 batch_run/outbreak_check.py ──► Determines num_locations & subtree_width
     │
     ▼
@@ -179,6 +189,8 @@ input_folder/
 
 ### Data Generation
 
+**Generic simulation engine** (randomized populations and locations):
+
 ```bash
 # Generate N successful outbreaks (configure params via env vars in script)
 bash simulate_and_extract/simulate_and_extract.sh <target_count> [output_folder]
@@ -186,6 +198,27 @@ bash simulate_and_extract/simulate_and_extract.sh <target_count> [output_folder]
 # Run in parallel on HPC via SLURM
 bash simulate_and_extract/submit.sh <num_batches> <sims_per_batch> <base_dir>
 ```
+
+**Denmark simulation engine** (5 Danish regions with real populations):
+
+```bash
+# Same interface, Denmark-calibrated parameters
+bash simulate_and_extract_Denmark/simulate_and_extract.sh <target_count> [output_folder]
+
+# Run in parallel on HPC via SLURM
+bash simulate_and_extract_Denmark/submit.sh <num_batches> <sims_per_batch> <base_dir>
+```
+
+| Parameter | Generic | Denmark |
+|-----------|---------|---------|
+| Locations | 10 random (pop 5k–50k) | 5 Danish regions (pop 590k–1.86M) |
+| R0 | Uniform [2, 8] | Beta(2, 3.5) on [0.5, 4], mode ≈ 1.5 |
+| Recovery rate | [0.01, 0.05] /day | [0.07, 0.23] /day (4–14 day infectious period) |
+| Sampling rate | [0.00004, 0.00044] /day | [0.001, 0.01] /day |
+| Migration rate | [0.00001, 0.0001] | [0.001, 0.012] |
+| Sim time | 6–18 (scaled by recovery) | 30–270 days |
+| Sample cap | — | 10,000 tips |
+| Min tips/location | 10 | 50 |
 
 ### Running the Full Pipeline (Single Machine)
 
