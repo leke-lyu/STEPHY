@@ -159,11 +159,18 @@ echo ""
 # MAIN LOOP
 # ============================================================
 
-success_count=0
-total_attempts=0
 consecutive_fails=0
 
 cd "$OUTPUT_DIR"
+
+# Resume: count existing successful outbreaks (_nf.csv = success marker)
+success_count=$(find . -maxdepth 1 -name '*_nf.csv' | wc -l)
+total_attempts=$(find logs -maxdepth 1 -name 'attempt_*.log' 2>/dev/null | wc -l)
+
+if [ $success_count -gt 0 ]; then
+    echo "Resuming: found $success_count existing successful outbreaks, starting at index $success_count"
+    echo "  (previous attempts: $total_attempts)"
+fi
 
 while [ $success_count -lt $TARGET ]; do
     idx=$success_count
@@ -187,7 +194,7 @@ while [ $success_count -lt $TARGET ]; do
 
     # Step 2: Run BEAST2 simulation
     if $step_ok; then
-        beast2 "$xml_file" >> "$log_file" 2>&1 || step_ok=false
+        beast2 -overwrite "$xml_file" >> "$log_file" 2>&1 || step_ok=false
     fi
 
     # Step 3: Clean tree file
