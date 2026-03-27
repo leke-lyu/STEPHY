@@ -1,38 +1,32 @@
 #!/usr/bin/env python3
 """Inspect BEAST2 tree datasets for tree_width and subtree_width.
 
-Recursively finds *_beast2.trees under the input folder, supporting:
-    folder/*_beast2.trees           (single batch)
-    folder/batch_*/*_beast2.trees   (multi-batch)
+Subcommands:
+    check  <folder> [SUB_TOP_PCT]   Sequential scan (all batches at once).
+    batch  <folder> <output.pkl>    Process one batch, save stats as pickle.
+    merge  <pickle_dir> [SUB_TOP_PCT]  Load batch pickles, print merged stats.
 
-Reports min/max/mean statistics and recommends --num_locations and
---subtree_width parameters for the build_graphs step.
-
-Usage:
-    python3 outbreak_check.py /path/to/epidata/folder [SUB_TOP_PCT]
-
-Arguments:
-    folder        Path to the dataset directory.
-    SUB_TOP_PCT   Top percentile of subtree_width to discard (default: 1).
+The 'check' subcommand is the original all-in-one mode.  For large datasets,
+use 'batch' (parallelised via SLURM) + 'merge' instead.
 """
 
 import re
 import sys
+import pickle
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
 
-# Regex to extract individual trees and tip locations from BEAST2 .trees files
 TREE_RE = re.compile(r'tree STATE_\d+ = (.+?)(?=\ntree |\nEnd;|$)', re.DOTALL)
 TIP_RE  = re.compile(r'\d+\[&type="I\{(\d+)\}",samp="sample"')
 
 
-# NOTE: This parse_trees() duplicates regex logic from beast2_parser.py but has
-# a different interface — it walks the filesystem (takes a root directory path)
-# and returns per-tree statistics, whereas beast2_parser.parse_trees() operates
-# on in-memory file content and returns raw tree strings.
+# ---------------------------------------------------------------------------
+# Core helpers
+# ---------------------------------------------------------------------------
+
 def parse_trees(root):
-    """Parse all *_beast2.trees files under `root`.
+    """Parse all *_beast2.trees files under *root*.
 
     Returns list of (tree_id, total_tips, {location: tip_count}).
     """
@@ -50,8 +44,31 @@ def parse_trees(root):
     return stats
 
 
-def print_stats(stats):
-    """Print min/max/mean for tree_width (total tips) and subtree_width (tips per location)."""
+def summarise(stats, dataset_label, sub_top_pct=1):
+    """Print tree/subtree statistics, filter outliers, and recommend params."""
+    locations = sorted({loc for _, _, lc in stats for loc in lc})
+
+    print(f'Dataset:   {dataset_label}')
+    print(f'Locations: {locations}')
+    print(f'\n=== All trees ({len(stats)} trees) ===')
+    _print_stats(stats)
+
+    # Filter by subtree_width (outbreak removal)
+    all_sub = np.array([n for _, _, lc in stats for n in lc.values()])
+    cutoff  = int(np.percentile(all_sub, 100 - sub_top_pct, method='lower'))
+    filtered = [s for s in stats if all(n <= cutoff for n in s[2].values())]
+
+    print(f'\n=== Discarding trees with any subtree_width > {cutoff} '
+          f'(top {sub_top_pct}% subtree threshold) ===')
+    print(f'    {len(stats)} -> {len(filtered)} trees remain\n')
+    _print_stats(filtered)
+
+    max_sub = max(n for _, _, lc in filtered for n in lc.values())
+    print(f'\n--num_locations {len(locations)} --subtree_width {max_sub}')
+
+
+def _print_stats(stats):
+    """Print min/max/mean for tree_width and subtree_width."""
     sizes = np.array([s[1] for s in stats])
     min_t = min(stats, key=lambda s: s[1])
     max_t = max(stats, key=lambda s: s[1])
@@ -69,45 +86,65 @@ def print_stats(stats):
     print(f'    Max: tree={max_s[0]}, loc={max_s[1]} ({max_s[2]} tips)')
 
 
-def main():
-    """CLI entry point: parse args, load trees, print summary, and recommend parameters."""
-    if len(sys.argv) < 2:
-        print('Usage: python3 outbreak_check.py /path/to/epidata/folder [SUB_TOP_PCT]')
-        sys.exit(1)
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
 
-    dataset = sys.argv[1]
-    sub_top_pct = int(sys.argv[2]) if len(sys.argv) >= 3 else 1
-
-    if not Path(dataset).is_dir():
-        print(f'Error: {dataset} is not a directory')
-        sys.exit(1)
-
-    stats = parse_trees(dataset)
+def cmd_check(args):
+    """Sequential scan — original all-in-one mode."""
+    if len(args) < 1:
+        sys.exit('Usage: outbreak_check.py check <folder> [SUB_TOP_PCT]')
+    folder = args[0]
+    sub_top_pct = int(args[1]) if len(args) >= 2 else 1
+    if not Path(folder).is_dir():
+        sys.exit(f'Error: {folder} is not a directory')
+    stats = parse_trees(folder)
     if not stats:
-        print(f'Error: No *_beast2.trees files found in {dataset}')
-        sys.exit(1)
+        sys.exit(f'Error: No *_beast2.trees files found in {folder}')
+    summarise(stats, folder, sub_top_pct)
 
-    locations = sorted({loc for _, _, lc in stats for loc in lc})
 
-    # --- Original summary ------------------------------------------------------
-    print(f'Dataset:   {dataset}')
-    print(f'Locations: {locations}')
-    print(f'\n=== All trees ({len(stats)} trees) ===')
-    print_stats(stats)
+def cmd_batch(args):
+    """Process one batch folder and pickle the stats."""
+    if len(args) != 2:
+        sys.exit('Usage: outbreak_check.py batch <folder> <output.pkl>')
+    folder, output = args
+    if not Path(folder).is_dir():
+        sys.exit(f'Error: {folder} is not a directory')
+    stats = parse_trees(folder)
+    if not stats:
+        sys.exit(f'Error: No *_beast2.trees files found in {folder}')
+    with open(output, 'wb') as f:
+        pickle.dump(stats, f)
+    print(f'{folder}: {len(stats)} trees -> {output}')
 
-    # --- Filter by subtree_width (outbreak removal) ----------------------------
-    all_sub_sizes = np.array([n for _, _, lc in stats for n in lc.values()])
-    sub_cutoff = int(np.percentile(all_sub_sizes, 100 - sub_top_pct, method='lower'))
 
-    filtered = [s for s in stats if all(n <= sub_cutoff for n in s[2].values())]
+def cmd_merge(args):
+    """Load all batch pickles and print merged summary."""
+    if len(args) < 1:
+        sys.exit('Usage: outbreak_check.py merge <pickle_dir> [SUB_TOP_PCT]')
+    pkl_dir = Path(args[0])
+    sub_top_pct = int(args[1]) if len(args) >= 2 else 1
+    pkl_files = sorted(pkl_dir.glob('batch_*_outbreak.pkl'))
+    if not pkl_files:
+        sys.exit(f'Error: No batch_*_outbreak.pkl files in {pkl_dir}')
+    stats = []
+    for pf in pkl_files:
+        with open(pf, 'rb') as f:
+            stats.extend(pickle.load(f))
+    summarise(stats, str(pkl_dir), sub_top_pct)
 
-    print(f'\n=== Discarding trees with any subtree_width > {sub_cutoff} '
-          f'(top {sub_top_pct}% subtree threshold) ===')
-    print(f'    {len(stats)} -> {len(filtered)} trees remain\n')
-    print_stats(filtered)
 
-    max_subtree = max(n for _, _, lc in filtered for n in lc.values())
-    print(f'\n--num_locations {len(locations)} --subtree_width {max_subtree}')
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+COMMANDS = {'check': cmd_check, 'batch': cmd_batch, 'merge': cmd_merge}
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        sys.exit(f'Usage: outbreak_check.py <{"|".join(COMMANDS)}> [args...]')
+    COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
 if __name__ == '__main__':

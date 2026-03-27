@@ -6,8 +6,11 @@ filtering.  Designed to be called per-batch by submit_build_graphs.sh.
 """
 
 import argparse
+import sys
 from pathlib import Path
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
 from config import DATA_ARGS
 from data import build_all_graphs
 

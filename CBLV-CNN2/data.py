@@ -6,6 +6,7 @@ Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL gra
 Graphs are used for batching only; no edges or edge features are computed.
 """
 
+import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -15,6 +16,7 @@ import torch
 import dgl
 import dendropy as dp
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
 from beast2_parser import count_trees
 
 

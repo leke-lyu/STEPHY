@@ -13,7 +13,7 @@
 # Output: <data_dir>_result/batch_*_graphs.pt  (one file per batch)
 # ==============================================================================
 #SBATCH --job-name=build_graphs
-#SBATCH --partition=lau
+#SBATCH --partition=week-long-cpu
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 #SBATCH --time=96:00:00
@@ -41,8 +41,8 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     echo "Submitting ${NUM_BATCHES} jobs (subtree_width=${SUBTREE_WIDTH})"
 
     sbatch --array=0-$((NUM_BATCHES - 1)) \
-           --output="${OUTPUT_DIR}/logs/slurm_%A_%a.out" \
-           --error="${OUTPUT_DIR}/logs/slurm_%A_%a.err" \
+           --output="${OUTPUT_DIR}/logs/build_graphs_%A_%a.out" \
+           --error="${OUTPUT_DIR}/logs/build_graphs_%A_%a.err" \
            --export=ALL,DATA_DIR="$DATA_DIR",SUBTREE_WIDTH="$SUBTREE_WIDTH",OUTPUT_DIR="$OUTPUT_DIR",SCRIPT_DIR="$SCRIPT_DIR" \
            "$0"
 else

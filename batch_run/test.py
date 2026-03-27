@@ -17,6 +17,7 @@ Expected layout under model_dir:
 
 import argparse
 import importlib.util
+import sys
 from pathlib import Path
 from copy import deepcopy
 
@@ -37,6 +38,9 @@ LABEL_DIRS = {
 }
 LABELS = list(LABEL_DIRS.keys())
 STEPHY_ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(STEPHY_ROOT / 'stephy2'))
+from graph_loader import load_graphs
 
 
 def parse_args():
@@ -264,11 +268,11 @@ def main():
 
     graphs_path = Path(args.graphs)
     model_dir = Path(args.model_dir)
-    output_dir = graphs_path.parent
+    output_dir = graphs_path if graphs_path.is_dir() else graphs_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading graphs from {graphs_path}...")
-    raw_graphs = torch.load(str(graphs_path), weights_only=False)
+    raw_graphs = load_graphs(args.graphs)
     print(f"Loaded {len(raw_graphs)} graphs, {args.num_locations} locations")
 
     for g, graph_id, locs, _ in raw_graphs:

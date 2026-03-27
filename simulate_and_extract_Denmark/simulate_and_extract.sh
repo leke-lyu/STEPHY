@@ -67,7 +67,7 @@ SIM_TIME_MAX=270
 TIME_UNITS="arbitrary"            # "recovery_period" or "arbitrary"
 
 # Early termination: stop simulation when sampled tips reach this count
-ENDS_WHEN="sample>=10000"
+ENDS_WHEN="sample>=8000"
 
 # Misc
 RANDOM_SEED="None"                # "None" = random (OS entropy), or integer for
@@ -141,6 +141,7 @@ OUTPUT_DIR=${2:-.}
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHARED_DIR="$(dirname "$SCRIPT_DIR")/simulate_and_extract"
 
 mkdir -p "$OUTPUT_DIR/logs"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -199,7 +200,7 @@ while [ $success_count -lt $TARGET ]; do
 
     # Step 3: Clean tree file
     if $step_ok; then
-        bash "$SCRIPT_DIR/edit_tree.sh" "$tree_file" >> "$log_file" 2>&1
+        bash "$SHARED_DIR/edit_tree.sh" "$tree_file" >> "$log_file" 2>&1
     fi
 
     # Step 4: Tip-count filter + feature extraction
@@ -207,7 +208,7 @@ while [ $success_count -lt $TARGET ]; do
     if $step_ok; then
         python3 -c "
 import sys, pathlib
-sys.path.insert(0, '$SCRIPT_DIR')
+sys.path.insert(0, '$SHARED_DIR')
 from characterizing_outbreak import process_simulation
 result = process_simulation(
     pathlib.Path('$tree_file'), pathlib.Path('$traj_file'),

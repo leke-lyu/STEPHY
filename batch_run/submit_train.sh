@@ -10,13 +10,13 @@
 #   Pipelines: stephy2(0), CBLV-CNN2(1), CBLV-GAT2(2)
 #   Labels:    R0(0), Recovery_Rate(1), Source_Sink_Score(2), Ancestral_State(3)
 #
-# Usage: bash submit_train.sh <graphs.pt> <num_locations>
+# Usage: bash submit_train.sh <graphs.pt or batch_dir> <num_locations>
 # Output: <graphs_dir>/<pipeline>/<label_short>/
 # ==============================================================================
 #SBATCH --job-name=train
 #SBATCH --partition=lau
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=24G
+#SBATCH --mem=120G
 #SBATCH --time=96:00:00
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -28,7 +28,7 @@ LABEL_SHORTS=(r0 rr sss as)
 if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     # --- Submission mode ---
     if [ $# -ne 2 ]; then
-        echo "Usage: bash $0 <graphs.pt> <num_locations>"
+        echo "Usage: bash $0 <graphs.pt or batch_dir> <num_locations>"
         exit 1
     fi
 
@@ -36,9 +36,14 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     NUM_LOCATIONS=$2
     GRAPHS_DIR="$(dirname "$GRAPHS")"
 
-    if [ ! -f "$GRAPHS" ]; then
+    if [ ! -e "$GRAPHS" ]; then
         echo "Error: ${GRAPHS} not found"
         exit 1
+    fi
+
+    # GRAPHS_DIR: parent if file, the dir itself if directory
+    if [ -d "$GRAPHS" ]; then
+        GRAPHS_DIR="$GRAPHS"
     fi
 
     mkdir -p "${GRAPHS_DIR}/logs"
@@ -62,7 +67,11 @@ else
     LABEL="${LABELS[$LABEL_IDX]}"
     LABEL_SHORT="${LABEL_SHORTS[$LABEL_IDX]}"
 
-    GRAPHS_DIR="$(dirname "$GRAPHS")"
+    if [ -d "$GRAPHS" ]; then
+        GRAPHS_DIR="$GRAPHS"
+    else
+        GRAPHS_DIR="$(dirname "$GRAPHS")"
+    fi
     OUTPUT_DIR="${GRAPHS_DIR}/${PIPELINE}/${LABEL_SHORT}"
     STEPHY_ROOT="$(dirname "$SCRIPT_DIR")"
     TRAIN_PY="${STEPHY_ROOT}/${PIPELINE}/train.py"

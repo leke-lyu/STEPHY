@@ -12,6 +12,7 @@ classification (Ancestral_State).
 """
 
 import argparse
+import sys
 from pathlib import Path
 from copy import deepcopy
 
@@ -26,6 +27,9 @@ from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
 from config import get_config
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
+from graph_loader import load_graphs
 
 
 def parse_args():
@@ -170,7 +174,7 @@ def main():
     # Self-loops are required by standard GATConv so each node can attend to
     # itself.  Adding them here (idempotent via dgl.add_self_loop) also lets
     # us reuse graphs.pt files built by stephy2 without rebuilding.
-    all_graphs = torch.load(args.graphs, weights_only=False)
+    all_graphs = load_graphs(args.graphs)
     all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 

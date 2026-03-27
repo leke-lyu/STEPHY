@@ -19,6 +19,7 @@ from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
 from config import get_config
+from graph_loader import load_graphs
 
 
 def parse_args():
@@ -183,7 +184,7 @@ def main():
     config = get_config()
 
     # Load graphs
-    all_graphs = torch.load(args.graphs, weights_only=False)
+    all_graphs = load_graphs(args.graphs)
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 
     config['model']['subtree_width'] = subtree_width

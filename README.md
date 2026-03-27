@@ -18,48 +18,45 @@ The repository contains three model pipelines and supporting infrastructure for 
 
 ```
 STEPHY/
-├── simulate_and_extract/       # Data generation: BEAST2 simulation + feature extraction
-│   ├── simulate_and_extract.sh # Main simulation loop
-│   ├── submit.sh               # SLURM array job wrapper for HPC
-│   ├── xml_generation.py       # Generate BEAST2/ReMaster XML configs
-│   ├── characterizing_outbreak.py  # Extract labels from simulation outputs
-│   ├── edit_tree.sh            # Strip unnecessary blocks from NEXUS files
-│   └── simulation_engine.pdf   # ReMaster simulation engine documentation
-├── simulate_and_extract_Denmark/  # Denmark-specific data generation
-│   ├── simulate_and_extract.sh # Main simulation loop (Denmark settings)
-│   ├── submit.sh               # SLURM array job wrapper for HPC
-│   ├── xml_generation.py       # Generate XML configs with Denmark parameters
-│   ├── characterizing_outbreak.py  # Extract labels from simulation outputs
-│   ├── edit_tree.sh            # Strip unnecessary blocks from NEXUS files
-│   └── r0_distribution_preview.png # Visualization of R0 Beta distribution
-├── stephy2/                    # Primary model: CBLV-GAT with edge attention
-│   ├── run_pipeline.sh         # End-to-end orchestration script
-│   ├── analyze_trees.py        # Step 1: Determine num_locations and subtree_width
-│   ├── build_graphs.py         # Step 2: Build DGL graphs
-│   ├── train.py                # Step 3: Training loop
-│   ├── model.py                # CBLV_GAT neural network
-│   ├── data.py                 # Data loading, CBLV encoding, DTW, graph construction
-│   ├── config.py               # Hyperparameters
-│   └── beast2_parser.py        # Lightweight regex-based NEXUS parser
-├── CBLV-CNN2/                  # Ablation: no graph structure
-│   ├── model.py                # CBLV_CNN (wider CNN, no attention)
-│   ├── train.py                # Training (no graph/edge logic)
-│   └── ...                     # Same structure as stephy2
-├── CBLV-GAT2/                  # Ablation: standard GATConv
-│   ├── model.py                # CBLV_GAT using dgl.nn.GATConv
-│   ├── train.py                # Training (adds self-loops, ignores edge features)
-│   └── ...                     # Same structure as stephy2
-├── batch_run/                  # HPC orchestration for large-scale runs
-│   ├── README.md               # Step-by-step workflow instructions
-│   ├── outbreak_check.py       # Data inspection and filtering
-│   ├── build_graphs.py         # Batched graph building with filtering
-│   ├── submit_build_graphs.sh  # SLURM job: parallel graph building
-│   ├── merge_graphs.py         # Merge batch graph files into one
-│   ├── submit_train.sh         # SLURM job: train all 12 models (3 pipelines x 4 labels)
-│   ├── test.py                 # Evaluate all models on held-out test set
-│   ├── beast2_parser.py        # NEXUS parser (shared from stephy2)
-│   ├── config.py               # Hyperparameters (shared from stephy2)
-│   └── data.py                 # Data loading (shared from stephy2)
+├── simulate_and_extract/          # Data generation (generic) + shared utilities
+│   ├── simulate_and_extract.sh    # Main simulation loop (10 random locations)
+│   ├── xml_generation.py          # Generate BEAST2/ReMaster XML configs
+│   ├── characterizing_outbreak.py # Extract labels from simulation outputs (shared)
+│   ├── edit_tree.sh               # Strip unnecessary blocks from NEXUS files (shared)
+│   ├── submit.sh                  # SLURM array job wrapper for HPC (shared)
+│   └── simulation_engine.pdf      # ReMaster simulation engine documentation
+├── simulate_and_extract_Denmark/  # Data generation (Denmark-specific)
+│   ├── simulate_and_extract.sh    # Main simulation loop (5 Danish regions)
+│   └── xml_generation.py          # Generate XML with Beta R0, fixed populations
+├── stephy2/                       # Primary model + shared utilities
+│   ├── run_pipeline.sh            # End-to-end entry point (--pipeline flag)
+│   ├── analyze_trees.py           # Step 1: Determine num_locations and subtree_width (shared)
+│   ├── build_graphs.py            # Step 2: Build DGL graphs
+│   ├── train.py                   # Step 3: Training loop
+│   ├── model.py                   # CBLV_GAT neural network
+│   ├── data.py                    # Data loading, CBLV encoding, DTW, graph construction
+│   ├── config.py                  # Hyperparameters
+│   ├── beast2_parser.py           # Lightweight regex-based NEXUS parser (shared)
+│   └── graph_loader.py            # Load .pt file or directory of batch files (shared)
+├── CBLV-CNN2/                     # Ablation: no graph structure
+│   ├── model.py                   # CBLV_CNN (wider CNN, no attention)
+│   ├── train.py                   # Training (no edge features)
+│   ├── build_graphs.py            # Build graphs (no edges)
+│   ├── data.py                    # Graph construction (no DTW)
+│   └── config.py                  # Hyperparameters (wider dims)
+├── CBLV-GAT2/                     # Ablation: standard GATConv
+│   ├── model.py                   # CBLV_GAT using dgl.nn.GATConv
+│   ├── train.py                   # Training (adds self-loops, no edge features)
+│   ├── build_graphs.py            # Build graphs (fully connected + self-loops)
+│   ├── data.py                    # Graph construction (no DTW)
+│   └── config.py                  # Hyperparameters (GATConv params)
+├── batch_run/                     # HPC orchestration for large-scale runs
+│   ├── outbreak_check.py          # Data inspection and filtering
+│   ├── submit_outbreak_check.sh   # SLURM job: parallel outbreak checking
+│   ├── build_graphs.py            # Batched graph building (imports from stephy2/)
+│   ├── submit_build_graphs.sh     # SLURM job: parallel graph building
+│   ├── submit_train.sh            # SLURM job: train all 12 models (3 pipelines x 4 labels)
+│   └── test.py                    # Evaluate all models on held-out test set
 └── README.md
 ```
 
@@ -77,7 +74,7 @@ batch_run/outbreak_check.py ──► Determines num_locations & subtree_width
     ▼
 build_graphs.py (stephy2/ or batch_run/)
     │  Uses stephy2/data.py for CBLV + DTW + label extraction
-    │  Produces: graphs.pt (DGL graphs with all node/edge features)
+    │  Produces: graphs.pt or batch_*_graphs.pt
     ▼
     ├──► stephy2/train.py    (CBLV-GAT with edge attention)
     ├──► CBLV-CNN2/train.py  (CNN only, ignores edges)
@@ -145,7 +142,7 @@ Graph building only needs to happen once -- `stephy2/build_graphs.py` produces a
 - Lag std from DTW warping path
 
 **Normalization**:
-- CBLV: divide by tree height
+- CBLV: divide by tree height (or log1p, configurable)
 - Aux features: log-transform then z-score on training set
 - Edge features: log+z-score for distance/lag_std; plain z-score for lag_mean
 - Labels (regression): z-score; test predictions inverse-transformed
@@ -192,38 +189,45 @@ input_folder/
 **Generic simulation engine** (randomized populations and locations):
 
 ```bash
-# Generate N successful outbreaks (configure params via env vars in script)
+# Generate N successful outbreaks
 bash simulate_and_extract/simulate_and_extract.sh <target_count> [output_folder]
 
 # Run in parallel on HPC via SLURM
-bash simulate_and_extract/submit.sh <num_batches> <sims_per_batch> <base_dir>
+bash simulate_and_extract/submit.sh \
+    simulate_and_extract/simulate_and_extract.sh <num_batches> <sims_per_batch> <base_dir>
 ```
 
 **Denmark simulation engine** (5 Danish regions with real populations):
 
 ```bash
-# Same interface, Denmark-calibrated parameters
+# Generate N successful outbreaks
 bash simulate_and_extract_Denmark/simulate_and_extract.sh <target_count> [output_folder]
 
-# Run in parallel on HPC via SLURM
-bash simulate_and_extract_Denmark/submit.sh <num_batches> <sims_per_batch> <base_dir>
+# Run in parallel on HPC via SLURM (uses shared submit.sh)
+bash simulate_and_extract/submit.sh \
+    simulate_and_extract_Denmark/simulate_and_extract.sh <num_batches> <sims_per_batch> <base_dir>
 ```
 
 | Parameter | Generic | Denmark |
 |-----------|---------|---------|
-| Locations | 10 random (pop 5k–50k) | 5 Danish regions (pop 590k–1.86M) |
-| R0 | Uniform [2, 8] | Beta(2, 3.5) on [0.5, 4], mode ≈ 1.5 |
-| Recovery rate | [0.01, 0.05] /day | [0.07, 0.23] /day (4–14 day infectious period) |
+| Locations | 10 random (pop 5k-50k) | 5 Danish regions (pop 590k-1.86M) |
+| R0 | Uniform [2, 8] | Beta(2, 3.5) on [0.5, 4], mode ~ 1.5 |
+| Recovery rate | [0.01, 0.05] /day | [0.07, 0.23] /day (4-14 day infectious period) |
 | Sampling rate | [0.00004, 0.00044] /day | [0.001, 0.01] /day |
 | Migration rate | [0.00001, 0.0001] | [0.001, 0.012] |
-| Sim time | 6–18 (scaled by recovery) | 30–270 days |
-| Sample cap | — | 10,000 tips |
+| Sim time | 6-18 (scaled by recovery) | 30-270 days |
+| Sample cap | -- | 8,000 tips |
 | Min tips/location | 10 | 50 |
 
 ### Running the Full Pipeline (Single Machine)
 
 ```bash
+# stephy2 (default)
 bash stephy2/run_pipeline.sh <input_folder_1> [input_folder_2 ...] <output_folder>
+
+# Ablation pipelines
+bash stephy2/run_pipeline.sh --pipeline CBLV-CNN2 <input_folders...> <output_folder>
+bash stephy2/run_pipeline.sh --pipeline CBLV-GAT2 <input_folders...> <output_folder>
 ```
 
 ### Running Individual Steps
@@ -250,18 +254,15 @@ python3 stephy2/train.py \
 
 ```bash
 # 1. Inspect data to determine parameters
-python3 batch_run/outbreak_check.py <data_dir>
+python3 batch_run/outbreak_check.py check <data_dir>
 
 # 2. Build graphs in parallel (one SLURM job per batch)
 bash batch_run/submit_build_graphs.sh <data_dir> <subtree_width>
 
-# 3. Merge batch graphs
-python3 batch_run/merge_graphs.py --result_dir <output_dir>
+# 3. Train all 12 models (3 pipelines x 4 labels)
+bash batch_run/submit_train.sh <data_dir>_result <num_locations>
 
-# 4. Train all 12 models (3 pipelines x 4 labels)
-bash batch_run/submit_train.sh <graphs.pt> <num_locations>
-
-# 5. Evaluate on held-out test set
+# 4. Evaluate on held-out test set
 python3 batch_run/test.py \
     --graphs <test_graphs.pt> \
     --model_dir <train_result_dir> \
