@@ -8,7 +8,7 @@ location from BEAST2 simulation outputs, writing a single CSV per simulation.
 Processing order for each simulation:
   1. Read the phylogenetic tree (*_beast2.trees).
   2. Count sampled tips per location — skip the simulation if any location
-     has 30 or fewer tips.
+     has fewer than the required minimum tips (configurable, default 30).
   3. Identify the ancestral location (MRCA of all sampled tips).
   4. Extract epidemic features and spillover location from the trajectory,
      reaction XML, and parameter files.

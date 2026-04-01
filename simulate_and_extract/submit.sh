@@ -32,9 +32,9 @@
 
 #SBATCH --job-name=sim
 #SBATCH --partition=lau,week-long-cpu
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
-#SBATCH --time=96:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --time=120:00:00
 
 if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     # --- Submission mode (run from login node) ---

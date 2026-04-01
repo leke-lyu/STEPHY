@@ -62,8 +62,8 @@ MIGRATION_MAX=0.012
 SHARED_MIGRATION_RATE=false
 
 # Simulation time (days, absolute)
-SIM_TIME_MIN=30
-SIM_TIME_MAX=270
+SIM_TIME_MIN=20
+SIM_TIME_MAX=240
 TIME_UNITS="arbitrary"            # "recovery_period" or "arbitrary"
 
 # Early termination: stop simulation when sampled tips reach this count
@@ -80,7 +80,7 @@ RANDOM_SEED="None"                # "None" = random (OS entropy), or integer for
 NUM_SIMS=1
 
 # Tip-count filter: every location must have more than this many tips
-MIN_TIPS=50
+MIN_TIPS=30
 
 # Safety: abort if a single index fails this many times in a row
 MAX_ATTEMPTS_PER_OUTBREAK=50

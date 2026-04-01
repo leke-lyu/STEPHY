@@ -239,7 +239,7 @@ def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_valu
         '<beast version="2.0" namespace="beast.base.inference:beast.base.inference.parameter:remaster">',
         f'  <run spec="Simulator" nSims="{num_sims}">',
         '    <simulate id="tree" spec="SimulatedTree">',
-        f'      <trajectory id="trajectory" spec="StochasticTrajectory" maxTime="{sim_time}" mustHave="sample>=500" endsWhen="{ends_when}">',
+        f'      <trajectory id="trajectory" spec="StochasticTrajectory" maxTime="{sim_time}" endsWhen="{ends_when}">',
         '      	',
         f'        <population spec="RealParameter" id="S" value="{" ".join(map(str, pop_sizes - seed_number))}"/>',
         f'        <population spec="RealParameter" id="I" value="{" ".join(map(str, seed_number))}"/>',
