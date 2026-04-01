@@ -14,10 +14,10 @@
 # Output: <graphs_dir>/<pipeline>/<label_short>/
 # ==============================================================================
 #SBATCH --job-name=train
-#SBATCH --partition=lau
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=120G
-#SBATCH --time=96:00:00
+#SBATCH --partition=lau,week-long-cpu
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=160G
+#SBATCH --time=128:00:00
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 

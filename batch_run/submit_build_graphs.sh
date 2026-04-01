@@ -13,7 +13,7 @@
 # Output: <data_dir>_result/batch_*_graphs.pt  (one file per batch)
 # ==============================================================================
 #SBATCH --job-name=build_graphs
-#SBATCH --partition=week-long-cpu
+#SBATCH --partition=lau,week-long-cpu
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 #SBATCH --time=96:00:00

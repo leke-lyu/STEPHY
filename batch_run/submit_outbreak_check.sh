@@ -10,10 +10,10 @@
 # Usage: bash submit_outbreak_check.sh <data_dir> [SUB_TOP_PCT]
 # ==============================================================================
 #SBATCH --job-name=outbreak_check
-#SBATCH --partition=week-long-cpu
+#SBATCH --partition=lau,week-long-cpu
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --time=10:00:00
+#SBATCH --time=12:00:00
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
