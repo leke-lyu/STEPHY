@@ -27,46 +27,19 @@ import os
 # ============================================================
 
 def str_to_bool(s):
-    """
-    Convert string to boolean.
-
-    Args:
-        s: String or boolean value
-
-    Returns:
-        Boolean value
-    """
+    """Convert string to boolean."""
     if isinstance(s, bool):
         return s
     return s.lower() in ('true', '1', 'yes')
 
 def str_to_int_or_none(s):
-    """
-    Convert string to int or None.
-
-    Args:
-        s: String value or None
-
-    Returns:
-        Integer value or None if input is "None"
-    """
+    """Convert string to int, or None if the value is 'None'."""
     if s == "None" or s is None:
         return None
     return int(s)
 
 def get_required_env(name):
-    """
-    Get required environment variable or raise error.
-
-    Args:
-        name: Name of the environment variable
-
-    Returns:
-        Value of the environment variable
-
-    Raises:
-        ValueError: If environment variable is not set
-    """
+    """Get required environment variable or raise ValueError."""
     value = os.getenv(name)
     if value is None:
         raise ValueError(f"Required environment variable '{name}' is not set. "
@@ -102,27 +75,10 @@ CONFIG = {
 
 def generate_constrained_values(num_locs, value_range, max_diff,
                                 distribution='uniform', alpha=None, beta_param=None):
-    """
-    Generate random values with constraint on maximum difference between values.
+    """Generate random values with constraint on maximum pairwise difference.
 
-    Strategy:
-        1. Calculate feasible range for an anchor point
-        2. Pick random anchor within feasible range (uniform or beta)
-        3. Generate values within max_diff of anchor (uniform spread)
-        This avoids bias toward the midpoint.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        value_range: Tuple of (min, max) for allowed values
-        max_diff: Maximum allowed difference between any two values
-        distribution: 'uniform' or 'beta' (controls anchor sampling)
-        alpha: Beta distribution alpha parameter
-        beta_param: Beta distribution beta parameter
-
-    Returns:
-        Array of constrained random values
+    Strategy: pick a random anchor within the feasible sub-range (uniform or
+    beta), then draw values within max_diff of that anchor.
     """
     # Calculate feasible range for the anchor point
     # The anchor must allow max_diff spread in both directions
@@ -150,44 +106,8 @@ def generate_constrained_values(num_locs, value_range, max_diff,
 
     return values
 
-def population_sizes(num_locs, pop_range, shared=False):
-    """
-    Generate population sizes for each location.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        pop_range: Tuple of (min, max) population size
-        shared: If True, all locations have same population
-
-    Returns:
-        Array of integer population sizes
-    """
-    if shared:
-        single_pop = np.random.uniform(pop_range[0], pop_range[1])
-        pop_sizes = np.full(num_locs, single_pop)
-    else:
-        pop_sizes = np.random.uniform(pop_range[0], pop_range[1], size=num_locs)
-
-    return pop_sizes.astype(int)
-
 def seed_location(num_locs, seed_loc=None):
-    """
-    Generate one-hot encoded seed location (where epidemic starts).
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        seed_loc: Specific location to seed (optional, if None chooses random)
-
-    Returns:
-        One-hot encoded array indicating seed location
-
-    Raises:
-        ValueError: If seed_loc is out of bounds
-    """
+    """Generate one-hot encoded seed location (where epidemic starts)."""
     seed_array = np.zeros(num_locs, dtype=int)
 
     if seed_loc is None:
@@ -202,23 +122,7 @@ def seed_location(num_locs, seed_loc=None):
 
 def R0_values(num_locs, R0_range, shared=False, max_diff=None,
               distribution='uniform', alpha=None, beta_param=None):
-    """
-    Generate R0 values (basic reproduction number) for locations.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        R0_range: Tuple of (min, max) R0 values
-        shared: If True, all locations have same R0
-        max_diff: Maximum difference in R0 across locations (optional)
-        distribution: 'uniform' or 'beta'
-        alpha: Beta distribution alpha parameter (only used when distribution='beta')
-        beta_param: Beta distribution beta parameter (only used when distribution='beta')
-
-    Returns:
-        Array of R0 values
-    """
+    """Generate R0 values (basic reproduction number) for each location."""
     if shared:
         if distribution == 'beta':
             raw = np.random.beta(alpha, beta_param)
@@ -234,20 +138,7 @@ def R0_values(num_locs, R0_range, shared=False, max_diff=None,
     return R0_array
 
 def recovery_rate(num_locs, mu_range, shared=False, max_diff=None):
-    """
-    Generate recovery rates (mu) for locations.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        mu_range: Tuple of (min, max) recovery rates
-        shared: If True, all locations have same recovery rate
-        max_diff: Maximum difference in recovery rates across locations (optional)
-
-    Returns:
-        Array of recovery rates
-    """
+    """Generate recovery rates (mu) for each location."""
     if shared:
         single_mu = np.random.uniform(mu_range[0], mu_range[1])
         mu_values = np.full(num_locs, single_mu)
@@ -257,34 +148,11 @@ def recovery_rate(num_locs, mu_range, shared=False, max_diff=None):
     return mu_values
 
 def sample_rate(sample_range):
-    """
-    Generate sampling rate (single shared value for all locations).
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        sample_range: Tuple of (min, max) sampling rate
-
-    Returns:
-        Single sampling rate value
-    """
+    """Generate a single sampling rate shared across all locations."""
     return np.random.uniform(sample_range[0], sample_range[1])
 
 def migration_rates(num_locs, migration_range, shared=False):
-    """
-    Generate migration rates between locations as a matrix.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        num_locs: Number of locations
-        migration_range: Tuple of (min, max) migration rates
-        shared: If True, all location pairs have same migration rate
-
-    Returns:
-        Matrix of migration rates (i,j) = rate from location i to j
-        Diagonal elements are 0 (no self-migration)
-    """
+    """Generate migration rate matrix. Diagonal is 0 (no self-migration)."""
     migration_matrix = np.zeros((num_locs, num_locs))
 
     if shared:
@@ -302,19 +170,7 @@ def migration_rates(num_locs, migration_range, shared=False):
     return migration_matrix
 
 def simulation_time(mu_values, sim_time_range, time_units='recovery_period'):
-    """
-    Generate simulation time.
-
-    Note: Relies on np.random seed being set once by generate_parameters().
-
-    Args:
-        mu_values: Array of recovery rates
-        sim_time_range: Tuple of (min, max) simulation time
-        time_units: 'recovery_period' (scaled by 1/mean(mu)) or 'arbitrary' (absolute)
-
-    Returns:
-        Simulation time value
-    """
+    """Generate simulation time. Scales by 1/mean(mu) if time_units='recovery_period'."""
     raw_sim_time = np.random.uniform(sim_time_range[0], sim_time_range[1])
 
     if time_units == 'recovery_period':
@@ -328,20 +184,7 @@ def simulation_time(mu_values, sim_time_range, time_units='recovery_period'):
 
 def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate_value,
                         beta_value, migration_rates_data, sim_time, output_file):
-    """
-    Save generated epidemic parameters to CSV file.
-
-    Args:
-        pop_sizes: Array of population sizes per location
-        seed_number: One-hot encoded seed location
-        R0_array: Array of R0 values per location
-        mu_values: Array of recovery rates per location
-        sample_rate_value: Sampling rate (shared across locations)
-        beta_value: Array of transmission rates per location
-        migration_rates_data: Matrix of migration rates between locations
-        sim_time: Simulation time
-        output_file: Path to output CSV file
-    """
+    """Save all generated epidemic parameters to a CSV file."""
     num_locs = len(pop_sizes)
     seed_loc_idx = np.argmax(seed_number)
 
@@ -389,21 +232,7 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate
 
 def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_value,
                  migration_rates_data, sim_time, num_sims, ends_when, output_file):
-    """
-    Generate BEAST2/ReMaster XML configuration file.
-
-    Args:
-        pop_sizes: Array of population sizes per location
-        seed_number: One-hot encoded seed location (initial infected per location)
-        beta_value: Array of transmission rates per location
-        mu_values: Array of recovery rates per location
-        sample_rate_value: Sampling rate (shared across locations)
-        migration_rates_data: Matrix of migration rates between locations
-        sim_time: Maximum simulation time
-        num_sims: Number of simulations to run
-        ends_when: ReMaster endsWhen predicate for early termination
-        output_file: Path to output XML file
-    """
+    """Generate BEAST2/ReMaster XML configuration file with SIR reactions."""
     num_pops = len(pop_sizes)
 
     xml_lines = [
@@ -458,18 +287,11 @@ def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_valu
 # ============================================================
 
 def generate_parameters(config):
-    """
-    Generate all epidemic parameters based on configuration.
+    """Generate all epidemic parameters based on configuration.
 
-    Args:
-        config: Configuration dictionary with all parameter ranges and settings
-
-    Returns:
-        Tuple of (pop_sizes, seed_number, R0_array, mu_values, sample_rate_value,
-                  beta_value, migration_rates_data, sim_time)
+    Sets the random seed once; all downstream functions rely on this single
+    seeding rather than managing their own RNG state.
     """
-    # Set the random seed once for the entire parameter-generation run.
-    # Individual parameter functions no longer reset the seed themselves.
     if config['seed'] is not None:
         np.random.seed(config['seed'])
 

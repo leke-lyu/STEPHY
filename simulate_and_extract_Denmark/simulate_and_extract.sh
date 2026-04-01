@@ -85,34 +85,7 @@ MIN_TIPS=50
 # Safety: abort if a single index fails this many times in a row
 MAX_ATTEMPTS_PER_OUTBREAK=50
 
-# ============================================================
-# EXPORTED ENVIRONMENT VARIABLES
-# ============================================================
-# The variables below are exported so that xml_generation.py
-# can read them via os.getenv().  They map 1:1 to the CONFIG
-# dict built at the top of xml_generation.py.
-#
-#   NUM_LOCS              Number of discrete locations
-#   FIXED_POP_SIZES       Space-separated population sizes per location
-#   SEED_LOCATION         Index of the epidemic seed location ("None" = random)
-#   R0_MIN / R0_MAX       Basic reproduction number range
-#   SHARED_R0             If "true", all locations share one R0
-#   MAX_R0_DIFF           Max pairwise R0 difference (heterogeneous mode)
-#   R0_DISTRIBUTION       "uniform" or "beta" sampling distribution
-#   R0_ALPHA / R0_BETA    Beta shape parameters (ignored if R0_DISTRIBUTION=uniform)
-#   MU_MIN / MU_MAX       Recovery-rate range
-#   SHARED_RECOVERY_RATE  If "true", all locations share one recovery rate
-#   MAX_MU_DIFF           Max pairwise recovery-rate difference
-#   SAMPLE_MIN / SAMPLE_MAX   Sampling-rate range (shared across locations)
-#   MIGRATION_MIN / MIGRATION_MAX   Migration-rate range
-#   SHARED_MIGRATION_RATE If "true", all location pairs share one rate
-#   SIM_TIME_MIN / SIM_TIME_MAX   Simulation-time range (days)
-#   TIME_UNITS            "recovery_period" or "arbitrary"
-#   ENDS_WHEN             ReMaster endsWhen predicate for early termination
-#   RANDOM_SEED           Seed for NumPy RNG ("None" = OS entropy per process;
-#                         must be "None" for multi-batch runs via submit.sh)
-#   NUM_SIMS              Number of BEAST2 simulations per XML (always 1 here)
-# ============================================================
+# Export configuration for xml_generation.py (reads via os.getenv())
 export NUM_LOCS FIXED_POP_SIZES SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
 export R0_MIN R0_MAX SHARED_R0 MAX_R0_DIFF R0_DISTRIBUTION R0_ALPHA R0_BETA
 export MU_MIN MU_MAX SHARED_RECOVERY_RATE MAX_MU_DIFF
@@ -165,8 +138,8 @@ consecutive_fails=0
 cd "$OUTPUT_DIR"
 
 # Resume: count existing successful outbreaks (_nf.csv = success marker)
-success_count=$(find . -maxdepth 1 -name '*_nf.csv' | wc -l)
-total_attempts=$(find logs -maxdepth 1 -name 'attempt_*.log' 2>/dev/null | wc -l)
+success_count=$(find . -maxdepth 1 -name '*_nf.csv' | wc -l | tr -d ' ')
+total_attempts=$(find logs -maxdepth 1 -name 'attempt_*.log' 2>/dev/null | wc -l | tr -d ' ')
 
 if [ $success_count -gt 0 ]; then
     echo "Resuming: found $success_count existing successful outbreaks, starting at index $success_count"

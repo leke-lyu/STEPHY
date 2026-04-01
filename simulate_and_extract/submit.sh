@@ -31,7 +31,7 @@
 # ============================================================
 
 #SBATCH --job-name=sim
-#SBATCH --partition=lau
+#SBATCH --partition=lau,week-long-cpu
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 #SBATCH --time=96:00:00

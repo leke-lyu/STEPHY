@@ -8,7 +8,7 @@ location from BEAST2 simulation outputs, writing a single CSV per simulation.
 Processing order for each simulation:
   1. Read the phylogenetic tree (*_beast2.trees).
   2. Count sampled tips per location — skip the simulation if any location
-     has 10 or fewer tips.
+     has 30 or fewer tips.
   3. Identify the ancestral location (MRCA of all sampled tips).
   4. Extract epidemic features and spillover location from the trajectory,
      reaction XML, and parameter files.
@@ -100,14 +100,10 @@ def read_newick(filepath):
     return re.sub(r'\[&[^\]]+\]', _convert_annotation, raw)
 
 
-def check_tip_counts(newick, min_tips=10):
+def check_tip_counts(newick, min_tips=30):
     """Return True if every location has more than *min_tips* sampled tips.
 
     Operates on the label-embedded Newick via regex -- no tree parsing needed.
-
-    NOTE: The default *min_tips* value (10) is coupled with the MIN_TIPS
-    variable in simulate_and_extract.sh, which passes it explicitly when
-    calling process_simulation().  Keep the two in sync.
     """
     counts = Counter(int(m.group(1)) for m in TIP_LOC_PATTERN.finditer(newick))
     return bool(counts) and all(c > min_tips for c in counts.values())
@@ -354,19 +350,11 @@ def calculate_node_metrics(event_counts, num_nodes):
 # Simulation processing
 # ---------------------------------------------------------------------------
 
-def process_simulation(tree_file, traj_file, param_file, output_file, min_tips=10):
+def process_simulation(tree_file, traj_file, param_file, output_file, min_tips=30):
     """Process one simulation end-to-end.
 
     Reads the tree, checks the tip-count filter, extracts epidemic features
     from the trajectory and parameter files, and writes a merged CSV.
-
-    Args:
-        tree_file:   Path to the BEAST2 .trees file.
-        traj_file:   Path to the BEAST2 .traj file.
-        param_file:  Path to the parameter CSV.
-        output_file: Path to write the output _nf.csv.
-        min_tips:    Minimum tips per location (default 10).
-                     NOTE: coupled with MIN_TIPS in simulate_and_extract.sh.
 
     Returns:
         One of: 'processed', 'skipped', 'error'.

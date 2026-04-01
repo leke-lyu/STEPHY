@@ -31,7 +31,7 @@ set -uo pipefail
 # ============================================================
 
 # Locations / populations
-NUM_LOCS=10
+NUM_LOCS=12
 POP_MIN=5000
 POP_MAX=50000
 SHARED_POP_SIZE=false
@@ -44,24 +44,27 @@ SHARED_R0=false
 MAX_R0_DIFF=2
 
 # Recovery rate (mu)
-MU_MIN=0.01
-MU_MAX=0.05
+MU_MIN=0.05
+MU_MAX=0.25
 SHARED_RECOVERY_RATE=false
 MAX_MU_DIFF=0.01
 
 # Sampling rate (shared across all locations)
-SAMPLE_MIN=0.00004
-SAMPLE_MAX=0.00044
+SAMPLE_MIN=0.0002
+SAMPLE_MAX=0.0028
 
 # Migration rate
-MIGRATION_MIN=0.0001
-MIGRATION_MAX=0.0011
+MIGRATION_MIN=0.0005
+MIGRATION_MAX=0.0045
 SHARED_MIGRATION_RATE=false
 
 # Simulation time
 SIM_TIME_MIN=6
 SIM_TIME_MAX=18
 TIME_UNITS="recovery_period"      # "recovery_period" or "arbitrary"
+
+# Early termination: stop simulation when sampled tips reach this count
+ENDS_WHEN="sample>=5000"
 
 # Misc
 RANDOM_SEED="None"                # "None" = random (OS entropy), or integer for
@@ -74,37 +77,12 @@ RANDOM_SEED="None"                # "None" = random (OS entropy), or integer for
 NUM_SIMS=1
 
 # Tip-count filter: every location must have more than this many tips
-MIN_TIPS=10
+MIN_TIPS=30
 
 # Safety: abort if a single index fails this many times in a row
 MAX_ATTEMPTS_PER_OUTBREAK=50
 
-# ============================================================
-# EXPORTED ENVIRONMENT VARIABLES
-# ============================================================
-# The variables below are exported so that xml_generation.py
-# can read them via os.getenv().  They map 1:1 to the CONFIG
-# dict built at the top of xml_generation.py.
-#
-#   NUM_LOCS              Number of discrete locations
-#   POP_MIN / POP_MAX     Population-size range per location
-#   SHARED_POP_SIZE       If "true", all locations share one population size
-#   SEED_LOCATION         Index of the epidemic seed location ("None" = random)
-#   R0_MIN / R0_MAX       Basic reproduction number range
-#   SHARED_R0             If "true", all locations share one R0
-#   MAX_R0_DIFF           Max pairwise R0 difference (heterogeneous mode)
-#   MU_MIN / MU_MAX       Recovery-rate range
-#   SHARED_RECOVERY_RATE  If "true", all locations share one recovery rate
-#   MAX_MU_DIFF           Max pairwise recovery-rate difference
-#   SAMPLE_MIN / SAMPLE_MAX   Sampling-rate range (shared across locations)
-#   MIGRATION_MIN / MIGRATION_MAX   Migration-rate range
-#   SHARED_MIGRATION_RATE If "true", all location pairs share one rate
-#   SIM_TIME_MIN / SIM_TIME_MAX   Simulation-time range
-#   TIME_UNITS            "recovery_period" or "arbitrary"
-#   RANDOM_SEED           Seed for NumPy RNG ("None" = OS entropy per process;
-#                         must be "None" for multi-batch runs via submit.sh)
-#   NUM_SIMS              Number of BEAST2 simulations per XML (always 1 here)
-# ============================================================
+# Export configuration for xml_generation.py (reads via os.getenv())
 export NUM_LOCS SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
 export POP_MIN POP_MAX SHARED_POP_SIZE
 export R0_MIN R0_MAX SHARED_R0 MAX_R0_DIFF
@@ -112,6 +90,7 @@ export MU_MIN MU_MAX SHARED_RECOVERY_RATE MAX_MU_DIFF
 export SAMPLE_MIN SAMPLE_MAX
 export MIGRATION_MIN MIGRATION_MAX SHARED_MIGRATION_RATE
 export SIM_TIME_MIN SIM_TIME_MAX
+export ENDS_WHEN
 
 # ============================================================
 # ARGUMENTS
@@ -156,8 +135,8 @@ consecutive_fails=0
 cd "$OUTPUT_DIR"
 
 # Resume: count existing successful outbreaks (_nf.csv = success marker)
-success_count=$(find . -maxdepth 1 -name '*_nf.csv' | wc -l)
-total_attempts=$(find logs -maxdepth 1 -name 'attempt_*.log' 2>/dev/null | wc -l)
+success_count=$(find . -maxdepth 1 -name '*_nf.csv' | wc -l | tr -d ' ')
+total_attempts=$(find logs -maxdepth 1 -name 'attempt_*.log' 2>/dev/null | wc -l | tr -d ' ')
 
 if [ $success_count -gt 0 ]; then
     echo "Resuming: found $success_count existing successful outbreaks, starting at index $success_count"
