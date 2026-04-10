@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Build and save DGL graphs for CBLV-CNN2 (nodes only, no edges)."""
+"""
+Build and serialize DGL graphs for CBLV-GAT.
+
+Reads all ``*_beast2.trees`` and corresponding ``*_nf.csv`` files from the
+input directory, constructs fully-connected DGL graphs with CBLV node features
+(and self-loops), and saves them as a single ``graphs.pt`` file for use by
+``train.py``.
+"""
 
 import argparse
 from pathlib import Path
@@ -9,7 +16,7 @@ from data import build_all_graphs
 
 
 def main():
-    parser = argparse.ArgumentParser(description='CBLV-CNN2: Build graphs (nodes only)')
+    parser = argparse.ArgumentParser(description='CBLV-GAT: Build graphs')
     parser.add_argument('--input_dir', required=True, help='Input data directory')
     parser.add_argument('--output', required=True, help='Output file (e.g., graphs.pt)')
     parser.add_argument('--subtree_width', type=int, required=True, help='Max tips per location')

@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
 """
-Data Loading and Preprocessing for CBLV-CNN2 (CNN + Aux Branch baseline, no graph structure).
+Shared tree loading, CBLV encoding, and label utilities.
 
-Loads phylogenetic trees (*_beast2.trees) and labels (*_nf.csv) to build DGL graphs.
-Graphs are used for batching only; no edges or edge features are computed.
+Used by all three pipelines (stephy, CBLV-CNN, CBLV-GAT).
+No heavy dependencies (no torch, dgl, scipy, numba).
 """
 
-import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from tqdm import tqdm
-
-import torch
-import dgl
 import dendropy as dp
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
-from beast2_parser import count_trees
 
 
 # ==============================================================================
@@ -65,7 +57,13 @@ def is_sample(node):
 # ==============================================================================
 
 class VirtualSubtreeEncoder:
-    """CBLV encoder using virtual subtree traversal (no tree copying)."""
+    """
+    CBLV encoder using virtual subtree traversal (no tree copying).
+
+    For each location, performs a virtual in-order traversal of the full tree,
+    visiting only nodes belonging to that location's subtree. Produces a
+    (subtree_width, 4) matrix plus 5 auxiliary statistics.
+    """
 
     def __init__(self, phy, tree_height):
         self.phy = phy
@@ -152,13 +150,8 @@ class VirtualSubtreeEncoder:
         """
         Encode CBLV matrix and auxiliary statistics for a target location.
 
-        Args:
-            loc: Target location ID
-            subtree_width: Pad/truncate to this many rows
-            cblv_scale: 'tree_height' (divide by tree height -> [0,1]) or 'log1p' (log(x+1))
-
         Returns: (heights, aux_stats)
-            heights: (subtree_width, 4) CBLV matrix, scaled according to cblv_scale
+            heights: (subtree_width, 4) CBLV matrix
             aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips]
         """
         mrca = self._find_mrca(loc)
@@ -169,7 +162,6 @@ class VirtualSubtreeEncoder:
         mrca_depth = mrca.root_distance
         n_tips = mrca.loc_counts.get(loc, 0)
 
-        # Compute avg path length from MRCA to each tip and collect tip sampling times
         tip_dists = []
         tip_times = []
         for nd in mrca.leaf_iter():
@@ -180,9 +172,6 @@ class VirtualSubtreeEncoder:
         aux_stats = [mrca_depth, min(tip_times), max(tip_times),
                      float(np.mean(tip_dists)), float(n_tips)]
 
-        # Fill CBLV matrix from virtual in-order traversal.
-        # idx tracks the current leaf position; internal nodes advance idx.
-        # Columns: 0=leaf dist from branch, 1=internal depth, 2=leaf accum edge, 3=internal accum edge
         heights = np.zeros((n_tips, 4))
         idx = 0
 
@@ -190,14 +179,12 @@ class VirtualSubtreeEncoder:
             if idx >= n_tips:
                 break
             if event_type == 'leaf':
-                # First leaf gets absolute distance (includes mrca_depth); others get relative
                 heights[idx, 0] = val1 + (mrca_depth if idx == 0 else 0)
-                heights[idx, 2] = val2  # accumulated edge length to this leaf
+                heights[idx, 2] = val2
             else:
-                # Internal node: store at next leaf's row, then advance position
                 if idx + 1 < n_tips:
-                    heights[idx + 1, 1] = val1  # internal node depth
-                    heights[idx + 1, 3] = val2  # accumulated edge length to internal node
+                    heights[idx + 1, 1] = val1
+                    heights[idx + 1, 3] = val2
                 idx += 1
 
         if cblv_scale == 'tree_height':
@@ -205,7 +192,6 @@ class VirtualSubtreeEncoder:
         elif cblv_scale == 'log1p':
             heights = np.log1p(heights)
 
-        # Pad to subtree_width
         if subtree_width and n_tips != subtree_width:
             padded = np.zeros((subtree_width, 4))
             padded[:min(n_tips, subtree_width)] = heights[:min(n_tips, subtree_width)]
@@ -227,112 +213,32 @@ def load_labels(input_folder, file_prefix, num_nodes):
     """
     Load labels from *_nf.csv file.
 
-    Args:
-        input_folder: Path to data folder
-        file_prefix: File prefix (e.g., '0' for '0_nf.csv')
-        num_nodes: Expected number of nodes (locations)
-
-    Returns:
-        labels: dict with 'R0', 'Source_Sink_Score', 'Recovery_Rate', and
-                'Ancestral_State' arrays
+    Returns dict with regression (reg_r0, reg_rr, reg_sss) and
+    classification (cls_r0, cls_sss, cls_as) arrays.
     """
-    input_folder = Path(input_folder)
-    nf_file = input_folder / f"{file_prefix}_nf.csv"
-
+    nf_file = Path(input_folder) / f"{file_prefix}_nf.csv"
     if not nf_file.exists():
         raise FileNotFoundError(f"Label file not found: {nf_file}")
 
     df = pd.read_csv(nf_file)
-
     if len(df) != num_nodes:
         raise ValueError(f"Label data has {len(df)} rows, expected {num_nodes}")
 
-    # Extract labels
-    labels = {
-        'R0': df['R0'].values.astype(np.float32),
-        'Source_Sink_Score': df['Source_Sink_Score'].values.astype(np.float32),
-        'Recovery_Rate': df['Recovery_Rate'].values.astype(np.float32),
-        'Ancestral_State': df['Ancestral_State'].values.astype(np.float32),
+    reg_r0 = df['R0'].values.astype(np.float32)
+    reg_rr = df['Recovery_Rate'].values.astype(np.float32)
+    reg_sss = df['Source_Sink_Score'].values.astype(np.float32)
+
+    cls_r0 = np.zeros(num_nodes, dtype=np.float32)
+    cls_r0[np.argmax(reg_r0)] = 1.0
+
+    cls_sss = np.zeros(num_nodes, dtype=np.float32)
+    cls_sss[np.argmax(reg_sss)] = 1.0
+
+    cls_as = df['Ancestral_State'].values.astype(np.float32)
+
+    return {
+        'reg_r0': reg_r0, 'cls_r0': cls_r0,
+        'reg_rr': reg_rr,
+        'reg_sss': reg_sss, 'cls_sss': cls_sss,
+        'cls_as': cls_as,
     }
-
-    return labels
-
-
-# ==============================================================================
-# Graph Building
-# ==============================================================================
-
-def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tree_height'):
-    """
-    Build a single DGL graph from a tree (nodes only, no edges).
-
-    Returns:
-        g: DGL graph with node features (no edges)
-        locations: List of location IDs
-        tree_height: Height of the tree
-    """
-    phy = load_tree(tree_file, tree_idx)
-    tree_height = max(nd.root_distance for nd in phy.leaf_node_iter())
-
-    # Node features (CBLV)
-    encoder = VirtualSubtreeEncoder(phy, tree_height)
-    locations = encoder.get_all_locations()
-    n_nodes = len(locations)
-
-    # CBLV shape: (n_nodes, subtree_width, 4) -> transpose to (n_nodes, 4, subtree_width)
-    node_cblv = np.zeros((n_nodes, subtree_width, 4))
-    node_aux = np.zeros((n_nodes, 5))
-
-    for i, loc in enumerate(locations):
-        cblv, aux_stats = encoder.encode_cblv(loc, subtree_width=subtree_width, cblv_scale=cblv_scale)
-        node_cblv[i] = cblv
-        node_aux[i] = aux_stats
-
-    # Transpose to (n_nodes, 4, subtree_width) for Conv1d
-    node_cblv = np.transpose(node_cblv, (0, 2, 1))
-
-    # Load labels from preprocessed CSV
-    file_prefix = Path(tree_file).stem.replace('_beast2', '')
-    labels = load_labels(input_folder, file_prefix, n_nodes)
-
-    # Construct graph (nodes only, no edges — used for batching)
-    g = dgl.graph(([], []), num_nodes=n_nodes)
-    g.ndata['cblv'] = torch.tensor(node_cblv, dtype=torch.float32)
-    g.ndata['aux'] = torch.tensor(node_aux, dtype=torch.float32)
-    g.ndata['location'] = torch.tensor(locations, dtype=torch.long)
-    g.ndata['R0'] = torch.tensor(labels['R0'], dtype=torch.float32)
-    g.ndata['Source_Sink_Score'] = torch.tensor(labels['Source_Sink_Score'], dtype=torch.float32)
-    g.ndata['Recovery_Rate'] = torch.tensor(labels['Recovery_Rate'], dtype=torch.float32)
-    g.ndata['Ancestral_State'] = torch.tensor(labels['Ancestral_State'], dtype=torch.float32)
-
-    return g, locations, tree_height
-
-
-def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees', verbose=True, cblv_scale='tree_height'):
-    """
-    Build DGL graphs from all trees in folder.
-
-    Returns:
-        List of (graph, graph_id, locations, tree_height) tuples
-    """
-    input_folder = Path(input_folder)
-    tree_files = sorted(input_folder.glob(file_pattern))
-
-    graphs = []
-
-    iterator = tqdm(tree_files, desc="Building graphs") if verbose else tree_files
-
-    for tree_file in iterator:
-        file_prefix = tree_file.stem.replace('_beast2', '')
-        with open(tree_file) as f:
-            n_trees = count_trees(f.read())
-
-        for idx in range(n_trees):
-            try:
-                g, locs, height = build_graph(str(tree_file), idx, subtree_width, input_folder, cblv_scale=cblv_scale)
-                graphs.append((g, f"{file_prefix}_{idx}", locs, height))
-            except Exception as e:
-                if verbose:
-                    print(f"Error {tree_file.name}[{idx}]: {e}")
-
-    return graphs

@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Training script for STEPHY2 (Phylogeny-only Model + Aux Branch).
+Training script for the CBLV-GAT baseline (standard GAT, no edge features).
 
-Requires precomputed graphs from build_graphs.py.
+Loads precomputed DGL graphs from ``build_graphs.py``, adds self-loops at load
+time (via ``dgl.add_self_loop``) so that graphs.pt files from stephy can be
+reused directly, then trains a single-task CBLV_GAT model for the requested
+label target.
+
+Supports both regression (reg_r0, reg_rr, reg_sss) and
+classification (cls_r0, cls_sss, cls_as).
 """
 
 import argparse
+import sys
 from pathlib import Path
 from copy import deepcopy
 
@@ -15,19 +22,22 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
+import dgl
 from dgl.dataloading import GraphDataLoader
 
 from model import CBLV_GAT, count_parameters
 from config import get_config
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy'))
 from graph_loader import load_graphs
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='STEPHY2: Train with phylogeny + aux data')
+    parser = argparse.ArgumentParser(description='CBLV-GAT: Train with standard GAT')
     parser.add_argument('--graphs', required=True, help='Precomputed graphs file (from build_graphs.py)')
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
-    parser.add_argument('--label', choices=['R0', 'Source_Sink_Score', 'Recovery_Rate', 'Ancestral_State'], required=True, help='Label to predict')
+    parser.add_argument('--label', choices=['reg_r0', 'cls_r0', 'reg_rr', 'reg_sss', 'cls_sss', 'cls_as'], required=True, help='Label to predict (reg_=regression, cls_=classification)')
     return parser.parse_args()
 
 
@@ -54,28 +64,6 @@ def normalize_aux_features(train_graphs, val_graphs, test_graphs):
     return {'mean': mean, 'std': std}
 
 
-def normalize_edge_features(train_graphs, val_graphs, test_graphs):
-    """Log + z-score for distance (ch0) and lag_std (ch2); plain z-score for lag_mean (ch1)."""
-    train_edge = torch.cat([g.edata['feat'] for g, *_ in train_graphs], dim=0)
-
-    # Log transform ch0 (distance) and ch2 (lag_std)
-    train_edge[:, 0] = torch.log(train_edge[:, 0].clamp(min=1e-8))
-    train_edge[:, 2] = torch.log(train_edge[:, 2].clamp(min=1e-8))
-
-    mean = train_edge.mean(dim=0)
-    std = train_edge.std(dim=0)
-    std = torch.where(std < 1e-8, torch.ones_like(std), std)
-
-    for graph_list in [train_graphs, val_graphs, test_graphs]:
-        for g, *_ in graph_list:
-            feat = g.edata['feat'].clone()
-            feat[:, 0] = torch.log(feat[:, 0].clamp(min=1e-8))
-            feat[:, 2] = torch.log(feat[:, 2].clamp(min=1e-8))
-            g.edata['feat'] = (feat - mean) / std
-
-    return {'mean': mean, 'std': std}
-
-
 def normalize_labels(train_graphs, val_graphs, test_graphs, label_name):
     """Z-score normalize labels using training set statistics."""
     train_labels = torch.cat([g.ndata[label_name] for g, *_ in train_graphs])
@@ -96,9 +84,8 @@ def _forward_batch(model, batched_g, label_name):
     """Run model forward and reshape predictions/labels to per-graph (batch, N)."""
     node_cblv = batched_g.ndata['cblv']
     node_aux = batched_g.ndata['aux']
-    edge_feat = batched_g.edata['feat']
 
-    predictions = model(batched_g, node_cblv, node_aux, edge_feat)
+    predictions = model(batched_g, node_cblv, node_aux)
     labels = batched_g.ndata[label_name]
 
     num_nodes_list = batched_g.batch_num_nodes().tolist()
@@ -183,15 +170,19 @@ def main():
     args = parse_args()
     config = get_config()
 
-    # Load graphs
+    # Load graphs and ensure self-loops exist.
+    # Self-loops are required by standard GATConv so each node can attend to
+    # itself.  Adding them here (idempotent via dgl.add_self_loop) also lets
+    # us reuse graphs.pt files built by stephy without rebuilding.
     all_graphs = load_graphs(args.graphs)
+    all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 
     config['model']['subtree_width'] = subtree_width
     config['num_locations'] = args.num_locations
 
     label_name = args.label
-    is_classification = (label_name == 'Ancestral_State')
+    is_classification = label_name.startswith('cls_')
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,19 +211,17 @@ def main():
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
     print(f"Features: CBLV(4ch) {config['data']['cblv_scale']}")
     print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
-    print(f"  Edge(dtw_dist, lag_mean, lag_std) ch0,2:log+zscore ch1:zscore")
     print(f"Label: {label_info}")
 
-    # Normalize: aux -> edge -> label
+    # Normalize: aux -> label (no edge features)
     aux_norm = normalize_aux_features(train_graphs, val_graphs, test_graphs)
-    edge_norm = normalize_edge_features(train_graphs, val_graphs, test_graphs)
 
     label_norm = None
     if not is_classification:
         label_norm = normalize_labels(train_graphs, val_graphs, test_graphs, label_name)
 
     # Save normalization params
-    torch.save({'aux': aux_norm, 'edge': edge_norm, 'label': label_norm},
+    torch.save({'aux': aux_norm, 'label': label_norm},
                output_dir / 'norm_params.pt')
 
     # Create DataLoaders
@@ -258,6 +247,7 @@ def main():
     # Training loop
     print("Training...")
     best_val_loss = float('inf')
+    best_val_acc = 0.0
     best_epoch = 0
     patience_counter = 0
     best_state = None
@@ -284,8 +274,15 @@ def main():
             else:
                 print(f"Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
 
-        if val_loss < best_val_loss:
+        if is_classification:
+            improved = val_acc > best_val_acc
+        else:
+            improved = val_loss < best_val_loss
+
+        if improved:
             best_val_loss = val_loss
+            if is_classification:
+                best_val_acc = val_acc
             best_epoch = epoch
             patience_counter = 0
             best_state = deepcopy(model.state_dict())
@@ -296,7 +293,10 @@ def main():
             print(f"Early stopping at epoch {epoch+1}")
             break
 
-    print(f"Best epoch: {best_epoch+1} (val_loss={best_val_loss:.4f})")
+    if is_classification:
+        print(f"Best epoch: {best_epoch+1} (val_acc={best_val_acc:.4f})")
+    else:
+        print(f"Best epoch: {best_epoch+1} (val_loss={best_val_loss:.4f})")
 
     # Evaluate on test set
     model.load_state_dict(best_state)

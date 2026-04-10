@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Configuration for CBLV-CNN2 (CNN + Aux Branch baseline, no graph structure).
+Configuration for CBLV-CNN (CNN + Aux Branch baseline, no graph structure).
 
 Uses phylogenetic (CBLV) + auxiliary tree statistics for spatial transmission estimation.
 Node embedding: 192-dim CNN (96+48+48) + 64-dim aux branch = 256-dim.
-Ablation of stephy2: same encoder, no GAT layer.
+Ablation of stephy: same encoder, no GAT layer.
 
 Output files:
 - training_history.csv: Loss in NORMALIZED scale (what optimizer sees)
@@ -13,14 +13,14 @@ Output files:
 """
 
 # Model architecture
-# Wider CNN than stephy2 (192-dim vs stephy2's 96-dim) to maintain a 256-dim
+# Wider CNN than stephy (192-dim vs stephy's 96-dim) to maintain a 256-dim
 # classifier input without the GAT layer. Aux branch is also doubled (64 vs 32).
 MODEL_ARGS = {
     # Note: 'subtree_width' is injected from CLI arguments in train.py
 
     # CNN encoder branches for CBLV (phylogenetic) features
     # Output: 96 + 48 + 48 = 192 per node (+ 64-dim aux branch = 256 total)
-    # (stephy2 uses 48 + 24 + 24 = 96-dim CNN + 32-dim aux, then GAT fills the gap)
+    # (stephy uses 48 + 24 + 24 = 96-dim CNN + 32-dim aux, then GAT fills the gap)
     'phy_channel_plain': [24, 48, 96],    # 3 layers, ends at 96
     'phy_channel_stride': [24, 48],        # 2 layers, ends at 48
     'phy_channel_dilate': [24, 48],        # 2 layers, ends at 48

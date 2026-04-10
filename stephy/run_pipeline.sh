@@ -2,42 +2,52 @@
 # ==============================================================================
 # STEPHY Pipeline: End-to-end phylogenetic spatial transmission estimation.
 #
-# Shared entry point for all three pipelines (stephy2, CBLV-CNN2, CBLV-GAT2).
-# The --pipeline flag selects which model to use; default is stephy2.
+# Shared entry point for all three pipelines (stephy, CBLV-CNN, CBLV-GAT).
+# The --pipeline flag selects which model to use; default is stephy.
 #
 # Three steps per input dataset:
 #   1. analyze_trees.py  -- Determine num_locations and subtree_width.
-#                           (always uses stephy2/analyze_trees.py)
+#                           (always uses stephy/analyze_trees.py)
 #   2. build_graphs.py   -- Build DGL graphs with CBLV features and labels.
 #                           (uses <pipeline>/build_graphs.py -> <pipeline>/data.py)
-#   3. train.py          -- Train four single-task models (R0, Recovery_Rate,
-#                           Source_Sink_Score, Ancestral_State).
+#   3. train.py          -- Train single-task models for selected labels.
 #                           (uses <pipeline>/train.py -> <pipeline>/model.py)
 #
+# Labels (default: all):
+#   reg_r0, cls_r0, reg_rr, reg_sss, cls_sss, cls_as
+#
 # Usage:
-#   bash stephy2/run_pipeline.sh [--pipeline stephy2|CBLV-CNN2|CBLV-GAT2] \
+#   bash stephy/run_pipeline.sh [--pipeline stephy|CBLV-CNN|CBLV-GAT] \
+#       [--labels reg_r0,cls_r0,...] \
 #       <input_folder_0> [input_folder_1 ...] <output_folder>
 #
 # Examples:
-#   bash stephy2/run_pipeline.sh data/ output/
-#   bash stephy2/run_pipeline.sh --pipeline CBLV-CNN2 data/ output/
-#   bash stephy2/run_pipeline.sh --pipeline CBLV-GAT2 data1/ data2/ output/
+#   bash stephy/run_pipeline.sh data/ output/
+#   bash stephy/run_pipeline.sh --labels reg_r0,cls_r0 data/ output/
+#   bash stephy/run_pipeline.sh --pipeline CBLV-CNN data/ output/
+#   bash stephy/run_pipeline.sh --pipeline CBLV-GAT --labels cls_as data1/ data2/ output/
 # ==============================================================================
 
 set -e
 export PYTHONDONTWRITEBYTECODE=1
 
-# Directory containing this script (stephy2/)
+# Directory containing this script (stephy/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Repository root (parent of stephy2/)
+# Repository root (parent of stephy/)
 STEPHY_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# --- Parse --pipeline flag ---
-PIPELINE="stephy2"
-if [ "$1" = "--pipeline" ]; then
-    PIPELINE="$2"
-    shift 2
-fi
+# --- Parse optional flags ---
+PIPELINE="stephy"
+ALL_LABELS="reg_r0,cls_r0,reg_rr,reg_sss,cls_sss,cls_as"
+LABELS="$ALL_LABELS"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --pipeline) PIPELINE="$2"; shift 2 ;;
+        --labels)   LABELS="$2";   shift 2 ;;
+        *)          break ;;
+    esac
+done
 
 PIPELINE_DIR="$STEPHY_ROOT/$PIPELINE"
 if [ ! -d "$PIPELINE_DIR" ]; then
@@ -47,7 +57,7 @@ fi
 
 # --- Parse positional args: input_folder(s) + output_folder ---
 if [ "$#" -lt 2 ]; then
-    echo "Usage: bash $0 [--pipeline stephy2|CBLV-CNN2|CBLV-GAT2] input_folder_0 [input_folder_1 ...] output_folder"
+    echo "Usage: bash $0 [--pipeline stephy|CBLV-CNN|CBLV-GAT] [--labels reg_r0,cls_r0,...] input_folder_0 [input_folder_1 ...] output_folder"
     exit 1
 fi
 
@@ -56,7 +66,10 @@ NUM_ARGS=${#ARGS[@]}
 OUT_FOLDER="${ARGS[$NUM_ARGS-1]}"
 INPUT_FOLDERS=("${ARGS[@]:0:$NUM_ARGS-1}")
 
+IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+
 echo "=== STEPHY: $PIPELINE ==="
+echo "Labels: ${LABEL_ARRAY[*]}"
 echo "Output: $OUT_FOLDER"
 echo ""
 
@@ -69,7 +82,7 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
 
     echo "--- $DATASET_NAME ---"
 
-    # Step 1: Analyze trees (shared — always stephy2/analyze_trees.py)
+    # Step 1: Analyze trees (shared — always stephy/analyze_trees.py)
     ANALYZE_OUTPUT=$(python3 "$SCRIPT_DIR/analyze_trees.py" "$INPUT_FOLDER" 2>&1)
     NUM_LOCATIONS=$(echo "$ANALYZE_OUTPUT" | grep "\-\-num_locations" | awk '{print $2}')
     SUBTREE_WIDTH=$(echo "$ANALYZE_OUTPUT" | grep "\-\-subtree_width" | awk '{print $2}')
@@ -88,17 +101,14 @@ for INPUT_FOLDER in "${INPUT_FOLDERS[@]}"; do
         --subtree_width "$SUBTREE_WIDTH" \
         --output "$GRAPHS_FILE"
 
-    # Step 3: Train all labels (pipeline-specific train.py -> model.py)
-    for LABEL_PAIR in R0:results_r0 Recovery_Rate:results_rr \
-                      Source_Sink_Score:results_sss Ancestral_State:results_as; do
-        LABEL="${LABEL_PAIR%%:*}"
-        OUT_SUBDIR="${LABEL_PAIR##*:}"
+    # Step 3: Train selected labels (pipeline-specific train.py -> model.py)
+    for LABEL in "${LABEL_ARRAY[@]}"; do
         echo "  Training $LABEL..."
         python3 "$PIPELINE_DIR/train.py" \
             --graphs "$GRAPHS_FILE" \
             --num_locations "$NUM_LOCATIONS" \
             --label "$LABEL" \
-            --output_dir "$WORK_DIR/$OUT_SUBDIR"
+            --output_dir "$WORK_DIR/results_$LABEL"
     done
 
     echo "  Done: $WORK_DIR"

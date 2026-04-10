@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration for STEPHY2 (Phylogeny-only Model).
+Configuration for STEPHY (Phylogeny-only Model).
 
 Uses phylogenetic (CBLV) + auxiliary tree statistics for spatial transmission estimation.
 Node embedding: 96-dim CNN (48+24+24) + 32-dim aux branch = 128-dim.

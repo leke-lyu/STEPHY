@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 """
-Training script for the CBLV-GAT2 baseline (standard GAT, no edge features).
+Training script for CBLV-CNN (CNN + Aux Branch baseline, no graph structure).
 
-Loads precomputed DGL graphs from ``build_graphs.py``, adds self-loops at load
-time (via ``dgl.add_self_loop``) so that graphs.pt files from stephy2 can be
-reused directly, then trains a single-task CBLV_GAT model for the requested
-label target.
-
-Supports both regression (R0, Recovery_Rate, Source_Sink_Score) and
-classification (Ancestral_State).
+Requires precomputed graphs from build_graphs.py.
 """
 
 import argparse
@@ -22,22 +16,21 @@ import torch
 import torch.nn as nn
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
-import dgl
 from dgl.dataloading import GraphDataLoader
 
-from model import CBLV_GAT, count_parameters
+from model import CBLV_CNN, count_parameters
 from config import get_config
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy'))
 from graph_loader import load_graphs
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='CBLV-GAT2: Train with standard GAT')
+    parser = argparse.ArgumentParser(description='CBLV-CNN: Train with phylogeny + aux data (no graph)')
     parser.add_argument('--graphs', required=True, help='Precomputed graphs file (from build_graphs.py)')
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
-    parser.add_argument('--label', choices=['R0', 'Source_Sink_Score', 'Recovery_Rate', 'Ancestral_State'], required=True, help='Label to predict')
+    parser.add_argument('--label', choices=['reg_r0', 'cls_r0', 'reg_rr', 'reg_sss', 'cls_sss', 'cls_as'], required=True, help='Label to predict (reg_=regression, cls_=classification)')
     return parser.parse_args()
 
 
@@ -48,7 +41,11 @@ def set_seed(seed):
 
 
 def normalize_aux_features(train_graphs, val_graphs, test_graphs):
-    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats)."""
+    """Normalize aux features: clamp(1e-8) -> log -> z-score (training set stats).
+
+    Note: No edge normalization — intentional for this CNN ablation baseline,
+    which has no edges or graph structure.
+    """
     train_aux = torch.cat([g.ndata['aux'] for g, *_ in train_graphs], dim=0)
 
     # Log transform (clamp to avoid log(0))
@@ -85,7 +82,7 @@ def _forward_batch(model, batched_g, label_name):
     node_cblv = batched_g.ndata['cblv']
     node_aux = batched_g.ndata['aux']
 
-    predictions = model(batched_g, node_cblv, node_aux)
+    predictions = model(node_cblv, node_aux)
     labels = batched_g.ndata[label_name]
 
     num_nodes_list = batched_g.batch_num_nodes().tolist()
@@ -170,19 +167,15 @@ def main():
     args = parse_args()
     config = get_config()
 
-    # Load graphs and ensure self-loops exist.
-    # Self-loops are required by standard GATConv so each node can attend to
-    # itself.  Adding them here (idempotent via dgl.add_self_loop) also lets
-    # us reuse graphs.pt files built by stephy2 without rebuilding.
+    # Load graphs
     all_graphs = load_graphs(args.graphs)
-    all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 
     config['model']['subtree_width'] = subtree_width
     config['num_locations'] = args.num_locations
 
     label_name = args.label
-    is_classification = (label_name == 'Ancestral_State')
+    is_classification = label_name.startswith('cls_')
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -213,7 +206,7 @@ def main():
     print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
     print(f"Label: {label_info}")
 
-    # Normalize: aux -> label (no edge features)
+    # Normalize: aux -> label
     aux_norm = normalize_aux_features(train_graphs, val_graphs, test_graphs)
 
     label_norm = None
@@ -234,7 +227,7 @@ def main():
     test_loader = GraphDataLoader(test_g, batch_size=batch_size, shuffle=False)
 
     # Create model
-    model = CBLV_GAT(config['model'])
+    model = CBLV_CNN(config['model'])
     print(f"Model: {count_parameters(model):,} parameters")
 
     # Training setup
@@ -247,6 +240,7 @@ def main():
     # Training loop
     print("Training...")
     best_val_loss = float('inf')
+    best_val_acc = 0.0
     best_epoch = 0
     patience_counter = 0
     best_state = None
@@ -273,8 +267,15 @@ def main():
             else:
                 print(f"Epoch {epoch+1:3d} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
 
-        if val_loss < best_val_loss:
+        if is_classification:
+            improved = val_acc > best_val_acc
+        else:
+            improved = val_loss < best_val_loss
+
+        if improved:
             best_val_loss = val_loss
+            if is_classification:
+                best_val_acc = val_acc
             best_epoch = epoch
             patience_counter = 0
             best_state = deepcopy(model.state_dict())
@@ -285,7 +286,10 @@ def main():
             print(f"Early stopping at epoch {epoch+1}")
             break
 
-    print(f"Best epoch: {best_epoch+1} (val_loss={best_val_loss:.4f})")
+    if is_classification:
+        print(f"Best epoch: {best_epoch+1} (val_acc={best_val_acc:.4f})")
+    else:
+        print(f"Best epoch: {best_epoch+1} (val_loss={best_val_loss:.4f})")
 
     # Evaluate on test set
     model.load_state_dict(best_state)

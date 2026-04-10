@@ -2,7 +2,7 @@
 """
 Test trained models on a new dataset.
 
-Evaluates all 12 pipeline x label combinations (3 pipelines x 4 labels)
+Evaluates all 18 pipeline x label combinations (3 pipelines x 6 labels)
 using pre-trained models from a result directory.  For each combination,
 loads the saved model and normalization parameters, applies them to the
 test graphs, and writes per-combination predictions plus an overall summary.
@@ -11,8 +11,8 @@ Usage:
     python3 test.py --graphs <graphs.pt> --model_dir <result_dir> --num_locations <N>
 
 Expected layout under model_dir:
-    <model_dir>/<pipeline>/<label_short>/best_model.pt
-    <model_dir>/<pipeline>/<label_short>/norm_params.pt
+    <model_dir>/<pipeline>/<label>/best_model.pt
+    <model_dir>/<pipeline>/<label>/norm_params.pt
 """
 
 import argparse
@@ -29,17 +29,11 @@ from dgl.dataloading import GraphDataLoader
 from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
 
 
-PIPELINES = ['stephy2', 'CBLV-CNN2', 'CBLV-GAT2']
-LABEL_DIRS = {
-    'R0': 'r0',
-    'Recovery_Rate': 'rr',
-    'Source_Sink_Score': 'sss',
-    'Ancestral_State': 'as',
-}
-LABELS = list(LABEL_DIRS.keys())
+PIPELINES = ['stephy', 'CBLV-CNN', 'CBLV-GAT']
+LABELS = ['reg_r0', 'cls_r0', 'reg_rr', 'reg_sss', 'cls_sss', 'cls_as']
 STEPHY_ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(0, str(STEPHY_ROOT / 'stephy2'))
+sys.path.insert(0, str(STEPHY_ROOT / 'stephy'))
 from graph_loader import load_graphs
 
 
@@ -70,9 +64,9 @@ def get_model_and_config(pipeline):
     config_mod = _load_module(f'{pipeline}_config', pipeline_dir / 'config.py')
     config = config_mod.get_config()
 
-    if pipeline == 'CBLV-CNN2':
+    if pipeline == 'CBLV-CNN':
         return model_mod.CBLV_CNN, config
-    else:  # stephy2 and CBLV-GAT2 both export CBLV_GAT
+    else:  # stephy and CBLV-GAT both export CBLV_GAT
         return model_mod.CBLV_GAT, config
 
 
@@ -112,18 +106,18 @@ def _forward(model, batched_g, label_name, pipeline):
     """Run a forward pass and return flat and per-graph predictions/labels.
 
     Each pipeline has a different model call signature:
-      - stephy2:   model(graph, cblv, aux, edge_feat)
-      - CBLV-CNN2: model(cblv, aux)
-      - CBLV-GAT2: model(graph, cblv, aux)
+      - stephy:   model(graph, cblv, aux, edge_feat)
+      - CBLV-CNN: model(cblv, aux)
+      - CBLV-GAT: model(graph, cblv, aux)
     """
     node_cblv = batched_g.ndata['cblv']
     node_aux = batched_g.ndata['aux']
 
-    if pipeline == 'stephy2':
+    if pipeline == 'stephy':
         preds = model(batched_g, node_cblv, node_aux, batched_g.edata['feat'])
-    elif pipeline == 'CBLV-CNN2':
+    elif pipeline == 'CBLV-CNN':
         preds = model(node_cblv, node_aux)
-    else:  # CBLV-GAT2
+    else:  # CBLV-GAT
         preds = model(batched_g, node_cblv, node_aux)
 
     labels = batched_g.ndata[label_name]
@@ -209,9 +203,8 @@ def compute_metrics(preds, labels, label_name, is_classification,
 
 def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_dir):
     """Test one pipeline x label combination. Returns metrics dict or None."""
-    label_dir = LABEL_DIRS[label_name]
-    model_path = model_dir / pipeline / label_dir
-    is_classification = (label_name == 'Ancestral_State')
+    model_path = model_dir / pipeline / label_name
+    is_classification = label_name.startswith('cls_')
 
     best_model_file = model_path / 'best_model.pt'
     norm_file = model_path / 'norm_params.pt'
@@ -227,14 +220,14 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
     # Each combination needs to start from the original un-normalized tensors.
     graphs = deepcopy(raw_graphs)
 
-    # CBLV-GAT2: add self-loops (matches training)
-    if pipeline == 'CBLV-GAT2':
+    # CBLV-GAT: add self-loops (matches training)
+    if pipeline == 'CBLV-GAT':
         graphs = [(dgl.add_self_loop(g), *rest) for g, *rest in graphs]
 
     # Apply training-set normalization
     norm_params = torch.load(norm_file, weights_only=False)
     normalize_aux(graphs, norm_params['aux'])
-    if pipeline == 'stephy2' and 'edge' in norm_params:
+    if pipeline == 'stephy' and 'edge' in norm_params:
         normalize_edge(graphs, norm_params['edge'])
 
     label_norm = norm_params.get('label')
@@ -252,7 +245,7 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
     metrics, pred_df = compute_metrics(preds, labels, label_name, is_classification,
                                        label_norm, num_locations)
 
-    save_dir = output_dir / pipeline / label_dir
+    save_dir = output_dir / pipeline / label_name
     save_dir.mkdir(parents=True, exist_ok=True)
     pred_df.to_csv(save_dir / 'test_predictions.csv', index=False)
 
@@ -290,7 +283,7 @@ def main():
         print(f"{'='*60}")
 
         for label_name in LABELS:
-            is_cls = (label_name == 'Ancestral_State')
+            is_cls = label_name.startswith('cls_')
             print(f"\n  {label_name} ({'classification' if is_cls else 'regression'})...")
 
             metrics = test_one(pipeline, label_name, raw_graphs, model_dir,

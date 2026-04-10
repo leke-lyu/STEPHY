@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy2'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy'))
 from config import DATA_ARGS
 from data import build_all_graphs
 

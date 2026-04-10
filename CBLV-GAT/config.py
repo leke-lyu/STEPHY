@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration for the CBLV-GAT2 baseline (standard GAT, node-based attention).
+Configuration for the CBLV-GAT baseline (standard GAT, node-based attention).
 
 All model dimensions are driven from this file so that config.py is the single
 source of truth for architecture choices.
@@ -10,7 +10,7 @@ Architecture rationale -- standard GAT (DGL ``GATConv``):
     * 4 attention heads x 64-dim each = 256-dim output, providing a good
       capacity/speed trade-off for graphs with ~5-20 nodes (locations).
     * Self-loops are added at load time in train.py, not baked into graphs.pt,
-      so the same graph files can be shared with stephy2.
+      so the same graph files can be shared with stephy.
 
 Output files:
     training_history.csv  -- Loss in NORMALIZED scale (what the optimizer sees)
@@ -41,7 +41,7 @@ MODEL_ARGS = {
     'aux_output': 32,    # Output dimension (concat with 96-dim CNN -> 128 total)
 
     # ---- Standard GAT layer (node-based attention, via DGL GATConv) ----
-    # Unlike stephy2's custom edge-attention GAT, attention here is computed
+    # Unlike stephy's custom edge-attention GAT, attention here is computed
     # solely from the 128-dim node embeddings.  4 heads provide diverse
     # attention patterns while keeping the total output at 256-dim.
     'gat_num_heads': 4,    # Number of attention heads
