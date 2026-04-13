@@ -78,7 +78,7 @@ TRAIN_ARGS = {
     'random_seed': 42,
 
     # Conformal prediction
-    'conformal_prediction': False,   # Master switch: True enables CQR/RAPS
+    'conformal_prediction': True,    # Master switch: True enables CQR/RAPS
     'cp_alpha': 0.1,                 # Miscoverage rate (1-alpha = coverage)
     'cqr_quantiles': [0.05, 0.5, 0.95],  # Quantiles for CQR (regression)
     'raps_lambda': 0.01,             # RAPS regularization strength (classification)
