@@ -7,16 +7,22 @@ using pre-trained models from a result directory.  For each combination,
 loads the saved model and normalization parameters, applies them to the
 test graphs, and writes per-combination predictions plus an overall summary.
 
+Supports conformal prediction: if cp_calibration.pt exists alongside a model,
+CQR intervals (regression) or RAPS prediction sets (classification) are
+applied to test predictions.
+
 Usage:
     python3 test.py --graphs <graphs.pt> --model_dir <result_dir> --num_locations <N>
 
 Expected layout under model_dir:
     <model_dir>/<pipeline>/<label>/best_model.pt
     <model_dir>/<pipeline>/<label>/norm_params.pt
+    <model_dir>/<pipeline>/<label>/cp_calibration.pt  (optional, if CP was used)
 """
 
 import argparse
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from copy import deepcopy
@@ -24,6 +30,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import dgl
 from dgl.dataloading import GraphDataLoader
 from sklearn.metrics import r2_score, mean_squared_error, accuracy_score
@@ -35,6 +42,7 @@ STEPHY_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(STEPHY_ROOT / 'stephy'))
 from graph_loader import load_graphs
+from conformal import load_cp_calibration, compute_cp_metrics
 
 
 def parse_args():
@@ -103,13 +111,7 @@ def normalize_labels(graphs, label_name, params):
 # ---------------------------------------------------------------------------
 
 def _forward(model, batched_g, label_name, pipeline):
-    """Run a forward pass and return flat and per-graph predictions/labels.
-
-    Each pipeline has a different model call signature:
-      - stephy:   model(graph, cblv, aux, edge_feat)
-      - CBLV-CNN: model(cblv, aux)
-      - CBLV-GAT: model(graph, cblv, aux)
-    """
+    """Run a forward pass and return flat and per-graph predictions/labels."""
     node_cblv = batched_g.ndata['cblv']
     node_aux = batched_g.ndata['aux']
 
@@ -130,12 +132,7 @@ def _forward(model, batched_g, label_name, pipeline):
 # ---------------------------------------------------------------------------
 
 def evaluate(model, dataloader, label_name, is_classification, pipeline):
-    """Run inference over the full dataloader.
-
-    Returns (preds, labels) as numpy arrays.
-    For classification: per-graph argmax predictions.
-    For regression: flat node-level predictions.
-    """
+    """Run inference over the full dataloader."""
     model.eval()
     all_preds, all_labels = [], []
 
@@ -155,16 +152,107 @@ def evaluate(model, dataloader, label_name, is_classification, pipeline):
 
 
 # ---------------------------------------------------------------------------
+# CQR test-time application
+# ---------------------------------------------------------------------------
+
+def apply_cqr(model, dataloader, label_name, pipeline, q_hat, label_norm):
+    """Apply CQR to produce conformalized intervals. Returns dict in true scale."""
+    model.eval()
+    all_preds, all_labels = [], []
+
+    with torch.no_grad():
+        for batched_g in dataloader:
+            flat_preds, flat_labels, _, _ = _forward(
+                model, batched_g, label_name, pipeline)
+            all_preds.append(flat_preds.numpy())
+            all_labels.append(flat_labels.numpy())
+
+    preds = np.concatenate(all_preds)    # (N, 3)
+    labels = np.concatenate(all_labels)  # (N,)
+
+    q_lo = preds[:, 0]
+    q_mid = preds[:, 1]
+    q_hi = preds[:, 2]
+
+    # Handle quantile crossing
+    q_lo, q_hi = np.minimum(q_lo, q_hi), np.maximum(q_lo, q_hi)
+
+    lower_z = q_lo - q_hat
+    upper_z = q_hi + q_hat
+
+    if label_norm is not None:
+        lm = label_norm['mean'].item()
+        ls = label_norm['std'].item()
+        lower = lower_z * ls + lm
+        upper = upper_z * ls + lm
+        point = q_mid * ls + lm
+        true = labels * ls + lm
+    else:
+        lower, upper, point, true = lower_z, upper_z, q_mid, labels
+
+    width = upper - lower
+    covered = ((true >= lower) & (true <= upper)).astype(float)
+
+    return {
+        'true': true, 'point': point,
+        'lower': lower, 'upper': upper,
+        'width': width, 'covered': covered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# RAPS test-time application
+# ---------------------------------------------------------------------------
+
+def apply_raps(model, dataloader, label_name, pipeline, q_hat, lambda_reg, k_reg):
+    """Apply RAPS to produce prediction sets. Returns dict."""
+    model.eval()
+    all_true, all_pred, all_sets, all_sizes, all_covered = [], [], [], [], []
+
+    with torch.no_grad():
+        for batched_g in dataloader:
+            _, _, pg_preds, pg_labels = _forward(
+                model, batched_g, label_name, pipeline)
+            probs = F.softmax(pg_preds, dim=1)
+            true_classes = pg_labels.argmax(dim=1)
+            pred_classes = pg_preds.argmax(dim=1)
+
+            for i in range(probs.shape[0]):
+                p = probs[i]
+                true_cls = true_classes[i].item()
+                sorted_probs, sorted_idx = torch.sort(p, descending=True)
+
+                pred_set = []
+                cumsum = 0.0
+                for j in range(len(sorted_probs)):
+                    cumsum += sorted_probs[j].item()
+                    cumsum += lambda_reg * max(j + 1 - k_reg, 0)
+                    pred_set.append(sorted_idx[j].item())
+                    if cumsum >= q_hat:
+                        break
+
+                all_true.append(true_cls)
+                all_pred.append(pred_classes[i].item())
+                all_sets.append(sorted(pred_set))
+                all_sizes.append(len(pred_set))
+                all_covered.append(1.0 if true_cls in pred_set else 0.0)
+
+    return {
+        'true_classes': np.array(all_true),
+        'pred_classes': np.array(all_pred),
+        'prediction_sets': all_sets,
+        'set_sizes': np.array(all_sizes),
+        'covered': np.array(all_covered),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
 
 def compute_metrics(preds, labels, label_name, is_classification,
                     label_norm, num_locations):
-    """Compute evaluation metrics and build a predictions DataFrame.
-
-    Classification: accuracy (overall and per-class).
-    Regression: R2 and MSE after inverse-transforming to the original scale.
-    """
+    """Compute evaluation metrics and build a predictions DataFrame."""
     if is_classification:
         acc = accuracy_score(labels, preds)
         metrics = {'accuracy': acc}
@@ -215,9 +303,11 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
         print(f"    SKIP: {norm_file} not found")
         return None
 
-    # Deep copy so in-place normalizations (aux, edge, labels) applied for this
-    # pipeline x label combination don't leak into subsequent combinations.
-    # Each combination needs to start from the original un-normalized tensors.
+    # Check for CP calibration
+    cp_cal = load_cp_calibration(model_path)
+    has_cp = cp_cal is not None
+
+    # Deep copy so in-place normalizations don't leak across combinations.
     graphs = deepcopy(raw_graphs)
 
     # CBLV-GAT: add self-loops (matches training)
@@ -238,12 +328,61 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
 
     model_cls, config = get_model_and_config(pipeline)
     config['model']['subtree_width'] = graphs[0][0].ndata['cblv'].shape[2]
+
+    # CQR models have 3 outputs
+    if has_cp and cp_cal['method'] == 'cqr':
+        config['model']['num_outputs'] = 3
+
     model = model_cls(config['model'])
     model.load_state_dict(torch.load(best_model_file, weights_only=False))
 
+    # --- Standard evaluation ---
     preds, labels = evaluate(model, dataloader, label_name, is_classification, pipeline)
     metrics, pred_df = compute_metrics(preds, labels, label_name, is_classification,
                                        label_norm, num_locations)
+
+    # --- Conformal prediction ---
+    if has_cp:
+        q_hat = cp_cal['q_hat']
+
+        if cp_cal['method'] == 'cqr':
+            cp_test = apply_cqr(model, dataloader, label_name, pipeline, q_hat, label_norm)
+            cp_metrics = compute_cp_metrics(cp_test, is_classification=False)
+            metrics['cp_coverage'] = cp_metrics['empirical_coverage']
+            metrics['cp_mean_width'] = cp_metrics['mean_interval_width']
+
+            pred_df = pd.DataFrame({
+                f'true_{label_name}': cp_test['true'],
+                f'pred_{label_name}': cp_test['point'],
+                f'lower_{label_name}': cp_test['lower'],
+                f'upper_{label_name}': cp_test['upper'],
+                'interval_width': cp_test['width'],
+                'covered': cp_test['covered'].astype(int),
+            })
+
+        elif cp_cal['method'] == 'raps':
+            lambda_reg = cp_cal.get('lambda_reg', 0.01)
+            k_reg = cp_cal.get('k_reg', 2)
+            cp_test = apply_raps(model, dataloader, label_name, pipeline,
+                                 q_hat, lambda_reg, k_reg)
+            cp_metrics = compute_cp_metrics(cp_test, is_classification=True,
+                                            num_locations=num_locations)
+            metrics['cp_coverage'] = cp_metrics['empirical_coverage']
+            metrics['cp_mean_set_size'] = cp_metrics['mean_set_size']
+
+            pred_df = pd.DataFrame({
+                'true_ancestor': cp_test['true_classes'].astype(int),
+                'pred_ancestor': cp_test['pred_classes'].astype(int),
+                'prediction_set': [str(s) for s in cp_test['prediction_sets']],
+                'set_size': cp_test['set_sizes'].astype(int),
+                'covered': cp_test['covered'].astype(int),
+            })
+
+        # Save CP metrics for this test run
+        cp_metrics_file = output_dir / pipeline / label_name / 'cp_metrics.json'
+        cp_metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cp_metrics_file, 'w') as f:
+            json.dump(cp_metrics, f, indent=2)
 
     save_dir = output_dir / pipeline / label_name
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -297,12 +436,27 @@ def main():
                     key = f'class_{c}_accuracy'
                     if key in metrics:
                         print(f"      Class {c}: {metrics[key]:.4f}")
+                if 'cp_coverage' in metrics:
+                    print(f"    CP Coverage: {metrics['cp_coverage']:.4f}")
+                    print(f"    CP Mean Set Size: {metrics['cp_mean_set_size']:.2f}")
                 summary_rows.append({
                     'pipeline': pipeline, 'label': label_name,
                     'metric_name': 'accuracy', 'metric_value': metrics['accuracy'],
                 })
+                if 'cp_coverage' in metrics:
+                    summary_rows.append({
+                        'pipeline': pipeline, 'label': label_name,
+                        'metric_name': 'cp_coverage', 'metric_value': metrics['cp_coverage'],
+                    })
+                    summary_rows.append({
+                        'pipeline': pipeline, 'label': label_name,
+                        'metric_name': 'cp_mean_set_size', 'metric_value': metrics['cp_mean_set_size'],
+                    })
             else:
                 print(f"    R2: {metrics['r2']:.4f}, MSE: {metrics['mse']:.4f}")
+                if 'cp_coverage' in metrics:
+                    print(f"    CP Coverage: {metrics['cp_coverage']:.4f}")
+                    print(f"    CP Mean Width: {metrics['cp_mean_width']:.4f}")
                 summary_rows.append({
                     'pipeline': pipeline, 'label': label_name,
                     'metric_name': 'r2', 'metric_value': metrics['r2'],
@@ -311,6 +465,15 @@ def main():
                     'pipeline': pipeline, 'label': label_name,
                     'metric_name': 'mse', 'metric_value': metrics['mse'],
                 })
+                if 'cp_coverage' in metrics:
+                    summary_rows.append({
+                        'pipeline': pipeline, 'label': label_name,
+                        'metric_name': 'cp_coverage', 'metric_value': metrics['cp_coverage'],
+                    })
+                    summary_rows.append({
+                        'pipeline': pipeline, 'label': label_name,
+                        'metric_name': 'cp_mean_width', 'metric_value': metrics['cp_mean_width'],
+                    })
 
     # Summary CSV
     if summary_rows:

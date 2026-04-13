@@ -62,10 +62,17 @@ TRAIN_ARGS = {
     'num_epochs': 500,
     'early_stopping_patience': 25,
 
-    # Data split (remaining is split 50/50 into val/test)
+    # Data split (remaining is split 50/50 into val/test, or 3-way if CP on)
     'train_ratio': 0.8,
     # Random seed
     'random_seed': 42,
+
+    # Conformal prediction
+    'conformal_prediction': False,   # Master switch: True enables CQR/RAPS
+    'cp_alpha': 0.1,                 # Miscoverage rate (1-alpha = coverage)
+    'cqr_quantiles': [0.05, 0.5, 0.95],  # Quantiles for CQR (regression)
+    'raps_lambda': 0.01,             # RAPS regularization strength (classification)
+    'raps_k_reg': 2,                 # RAPS: penalty starts after k classes
 }
 
 # Data processing parameters
