@@ -18,7 +18,8 @@ def load_graphs(path):
     Returns
     -------
     list
-        List of (graph, graph_id, locs, height) tuples.
+        List of (graph, meta, locs, height) tuples, where ``meta`` is a dict
+        with keys ``batch``, ``sim_id``, ``tree_idx``.
     """
     path = Path(path)
 

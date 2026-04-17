@@ -13,6 +13,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy'))
 from config import DATA_ARGS
 from data import build_all_graphs
+from predictions import format_graph_id
 
 
 def main():
@@ -34,13 +35,13 @@ def main():
     # so their representations are lossy; filtering them avoids noisy inputs.
     filtered = []
     discarded = 0
-    for g, graph_id, locs, height in graphs:
+    for g, meta, locs, height in graphs:
         max_tips = int(g.ndata['aux'][:, 4].max().item())
         if max_tips <= args.subtree_width:
-            filtered.append((g, graph_id, locs, height))
+            filtered.append((g, meta, locs, height))
         else:
             discarded += 1
-            print(f"Discarded {graph_id}: max tips/location = {max_tips} > {args.subtree_width}")
+            print(f"Discarded {format_graph_id(meta)}: max tips/location = {max_tips} > {args.subtree_width}")
 
     if discarded:
         print(f"Kept {len(filtered)}/{len(graphs)} graphs ({discarded} discarded)")

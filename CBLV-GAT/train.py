@@ -30,6 +30,7 @@ from config import get_config
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'stephy'))
 from graph_loader import load_graphs
+from predictions import attach_metadata, format_graph_id
 from conformal import (PinballLoss, split_data_cp,
                        calibrate_cqr, apply_cqr_test,
                        calibrate_raps, apply_raps_test,
@@ -163,7 +164,7 @@ def main():
 
     # Load graphs and ensure self-loops exist.
     all_graphs = load_graphs(args.graphs)
-    all_graphs = [(dgl.add_self_loop(g), gid, locs, h) for g, gid, locs, h in all_graphs]
+    all_graphs = [(dgl.add_self_loop(g), meta, locs, h) for g, meta, locs, h in all_graphs]
     subtree_width = all_graphs[0][0].ndata['cblv'].shape[2]
 
     config['model']['subtree_width'] = subtree_width
@@ -179,10 +180,10 @@ def main():
     set_seed(config['train']['random_seed'])
 
     # Validate num_locations
-    for g, graph_id, locs, _ in all_graphs:
+    for g, meta, locs, _ in all_graphs:
         if g.num_nodes() != args.num_locations:
             raise ValueError(
-                f"Graph {graph_id}: expected {args.num_locations} locations, got {g.num_nodes()}."
+                f"Graph {format_graph_id(meta)}: expected {args.num_locations} locations, got {g.num_nodes()}."
             )
 
     # Train/val/(cal)/test split
@@ -375,7 +376,7 @@ def main():
                 'covered': cp_test['covered'].astype(int),
             })
 
-        _save_results(output_dir, best_state, history, pred_df)
+        _save_results(output_dir, best_state, history, pred_df, test_graphs, is_classification)
     else:
         test_results = evaluate(model, test_loader, criterion, label_name, is_classification)
         test_preds = test_results['preds']
@@ -383,7 +384,7 @@ def main():
 
         pred_df = _print_metrics(test_preds, test_labels, is_classification, label_name,
                                   label_norm, args.num_locations)
-        _save_results(output_dir, best_state, history, pred_df)
+        _save_results(output_dir, best_state, history, pred_df, test_graphs, is_classification)
 
 
 def _print_metrics(test_preds, test_labels, is_classification, label_name,
@@ -420,8 +421,9 @@ def _print_metrics(test_preds, test_labels, is_classification, label_name,
         })
 
 
-def _save_results(output_dir, best_state, history, pred_df):
-    """Save model, training history, and predictions."""
+def _save_results(output_dir, best_state, history, pred_df, test_graphs, is_classification):
+    """Save model, training history, and predictions with attached metadata."""
+    pred_df = attach_metadata(pred_df, test_graphs, is_classification)
     torch.save(best_state, output_dir / 'best_model.pt')
     pd.DataFrame(history).to_csv(output_dir / 'training_history.csv', index=False)
     pred_df.to_csv(output_dir / 'test_predictions.csv', index=False)

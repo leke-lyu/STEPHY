@@ -188,8 +188,15 @@ def build_graph(tree_file, tree_idx, subtree_width, input_folder, cblv_scale='tr
 
 
 def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees', verbose=True, cblv_scale='tree_height'):
-    """Build DGL graphs from all BEAST2 tree files in a folder."""
+    """Build DGL graphs from all BEAST2 tree files in a folder.
+
+    Each returned record is a 4-tuple ``(g, meta, locs, height)`` where ``meta``
+    is a dict with keys ``batch`` (input folder basename), ``sim_id``
+    (simulation identifier from filename), and ``tree_idx`` (posterior tree
+    index within the .trees file).
+    """
     input_folder = Path(input_folder)
+    batch = input_folder.name
     tree_files = sorted(input_folder.glob(file_pattern))
     graphs = []
 
@@ -202,7 +209,8 @@ def build_all_graphs(input_folder, subtree_width, file_pattern='*_beast2.trees',
         for idx in range(n_trees):
             try:
                 g, locs, height = build_graph(str(tree_file), idx, subtree_width, input_folder, cblv_scale=cblv_scale)
-                graphs.append((g, f"{file_prefix}_{idx}", locs, height))
+                meta = {'batch': batch, 'sim_id': file_prefix, 'tree_idx': idx}
+                graphs.append((g, meta, locs, height))
             except Exception as e:
                 if verbose:
                     print(f"Error {tree_file.name}[{idx}]: {e}")

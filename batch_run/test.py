@@ -42,6 +42,7 @@ STEPHY_ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(STEPHY_ROOT / 'stephy'))
 from graph_loader import load_graphs
+from predictions import attach_metadata, format_graph_id
 from conformal import load_cp_calibration, compute_cp_metrics
 
 
@@ -386,6 +387,7 @@ def test_one(pipeline, label_name, raw_graphs, model_dir, num_locations, output_
 
     save_dir = output_dir / pipeline / label_name
     save_dir.mkdir(parents=True, exist_ok=True)
+    pred_df = attach_metadata(pred_df, graphs, is_classification)
     pred_df.to_csv(save_dir / 'test_predictions.csv', index=False)
 
     return metrics
@@ -407,10 +409,10 @@ def main():
     raw_graphs = load_graphs(args.graphs)
     print(f"Loaded {len(raw_graphs)} graphs, {args.num_locations} locations")
 
-    for g, graph_id, locs, _ in raw_graphs:
+    for g, meta, locs, _ in raw_graphs:
         if g.num_nodes() != args.num_locations:
             raise ValueError(
-                f"Graph {graph_id}: expected {args.num_locations} locations, "
+                f"Graph {format_graph_id(meta)}: expected {args.num_locations} locations, "
                 f"got {g.num_nodes()}."
             )
 
