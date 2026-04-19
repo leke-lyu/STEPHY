@@ -5,8 +5,9 @@ does our GNN beat the simulation-parameter oracles?
 
 Four predictors, ranked per graph against true_reg_sss:
   A  true reg_r0          (sim param; from --r0-predictions CSV)
-  B  MigIdx               (sim param; (inflow−outflow)/(inflow+outflow)
-                           from {batch}/{sim_id}_parameter.csv)
+  B  MigIdx               (sim param; (outflow−inflow)/(outflow+inflow)
+                           from {batch}/{sim_id}_parameter.csv;
+                           same sign convention as SSS)
   C  Initial_Population   (sim param; from {batch}/{sim_id}_nf.csv)
   D  pred_reg_sss         (the GNN's prediction)
 
@@ -103,8 +104,9 @@ def _join_per_sim(sss_df, nf_root, filename_tpl, value_col, loader):
 
 
 def _load_migration_index(parameter_path):
-    """Per-location MigIdx = (inflow − outflow) / (inflow + outflow) from
-    the migration matrix in a single *_parameter.csv (one row)."""
+    """Per-location MigIdx = (outflow − inflow) / (outflow + inflow) from
+    the migration matrix in a single *_parameter.csv (one row).
+    Matches the SSS convention: +1 = pure source, −1 = pure sink."""
     row = pd.read_csv(parameter_path).iloc[0]
     inflow, outflow = {}, {}
     for col, val in row.items():
@@ -117,9 +119,9 @@ def _load_migration_index(parameter_path):
     if not inflow:
         raise ValueError(f"No migration_loc_X_to_loc_Y columns in {parameter_path}")
     locs = sorted(set(inflow) | set(outflow))
-    mig = [((inflow.get(a, 0.) - outflow.get(a, 0.)) /
-            (inflow.get(a, 0.) + outflow.get(a, 0.)))
-           if (inflow.get(a, 0.) + outflow.get(a, 0.)) > 0 else np.nan
+    mig = [((outflow.get(a, 0.) - inflow.get(a, 0.)) /
+            (outflow.get(a, 0.) + inflow.get(a, 0.)))
+           if (outflow.get(a, 0.) + inflow.get(a, 0.)) > 0 else np.nan
            for a in locs]
     return pd.DataFrame({'Location': locs, 'mig_idx': mig})
 
