@@ -118,6 +118,15 @@ def make_pipeline_handles():
 # -- Main --------------------------------------------------------------------
 
 def main():
+    """
+    Build Figure 2 — top-k identification, R0 rank structure, and 5k generalization.
+
+    Row 1 (a): top-k accuracy across pipelines on the 100k dataset.
+    Row 2 (b): R0 distribution per rank with gap violins (stephy only — single-
+    pipeline view of rank structure, not a cross-pipeline comparison).
+    Row 3 (c-f): pipeline metrics across three population-scale datasets.
+    Output: fig2.pdf at the top of BASE_DIR.
+    """
     # -- Load R0 predictions (100k) and reshape to (n_outbreaks, 12) --------
     data = {}
     for pipeline in PIPELINES:
@@ -132,6 +141,8 @@ def main():
         }
 
     n_outbreaks = data['stephy']['true'].shape[0]
+    # Row 2 visualizes true-R0 rank structure on the stephy split only; true
+    # values are identical across pipelines since they share the same test set.
     sorted_desc = np.sort(data['stephy']['true'], axis=1)[:, ::-1]
     gap_data = [sorted_desc[:, i] - sorted_desc[:, i + 1]
                 for i in range(NUM_LOCATIONS - 1)]

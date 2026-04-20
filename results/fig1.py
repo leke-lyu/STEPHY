@@ -175,6 +175,13 @@ def plot_classification(ax, true_vals, pred_vals, target):
 # -- Main --------------------------------------------------------------------
 
 def main():
+    """
+    Build Figure 1 — model diagnostics across pipelines and targets.
+
+    Row 1 shows stephy's per-target scatter (regression) or per-state accuracy
+    (classification). Row 2 shows R2/accuracy vs. conformal interval width or
+    set size for each pipeline. Output: fig1.pdf alongside this script.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
                         default='/Users/lukelyu/Desktop/data/simu/conformal_prediction/100k_result')
