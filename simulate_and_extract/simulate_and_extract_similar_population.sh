@@ -32,8 +32,8 @@ set -uo pipefail
 
 # Locations / populations
 NUM_LOCS=12
-POP_MIN=5000
-POP_MAX=50000
+POP_MIN=25000
+POP_MAX=30000
 SHARED_POP_SIZE=false
 SEED_LOCATION="None"              # "None" = random, or 0..NUM_LOCS-1
 
@@ -165,7 +165,7 @@ while [ $success_count -lt $TARGET ]; do
 
     # Step 2: Run BEAST2 simulation
     if $step_ok; then
-        beast2 -overwrite "$xml_file" >> "$log_file" 2>&1 || step_ok=false
+        beast -overwrite "$xml_file" >> "$log_file" 2>&1 || step_ok=false
     fi
 
     # Step 3: Clean tree file
