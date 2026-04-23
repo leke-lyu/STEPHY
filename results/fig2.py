@@ -8,9 +8,11 @@ Figure 2 — Performance analysis (3-row layout).
 
 Usage:
     python3 fig2.py
+    python3 fig2.py --result_dir /path/to/100k_result --pt_dir /path/to/point_estimate
 """
 
 import os
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -36,9 +38,6 @@ plt.rcParams.update({
 })
 
 # -- Pipelines ---------------------------------------------------------------
-
-BASE_DIR = '/Users/lukelyu/Desktop/data/simu'
-RESULT_DIR = os.path.join(BASE_DIR, '100k_result')
 
 PIPELINES = ['CBLV-CNN', 'stephy']
 PIPELINE_STYLE = {
@@ -91,11 +90,11 @@ def draw_iqr(ax, data_list, positions, linewidth=1.5):
                   linewidth=linewidth, zorder=4)
 
 
-def load_summary_metrics():
-    """Load R2/accuracy from each population-scale summary.csv."""
+def load_summary_metrics(pt_dir):
+    """Load R2/accuracy from each population-scale summary.csv under pt_dir."""
     metrics = {p: {t: [] for t in TARGETS} for p in PIPELINES}
     for ds_dir, _ in DATASETS:
-        df = pd.read_csv(os.path.join(BASE_DIR, ds_dir, 'summary.csv'))
+        df = pd.read_csv(os.path.join(pt_dir, ds_dir, 'summary.csv'))
         for _, row in df.iterrows():
             pipeline, label = row['pipeline'], row['label']
             if label in TARGETS and pipeline in PIPELINES:
@@ -125,12 +124,23 @@ def main():
     Row 2 (b): R0 distribution per rank with gap violins (stephy only — single-
     pipeline view of rank structure, not a cross-pipeline comparison).
     Row 3 (c-f): pipeline metrics across three population-scale datasets.
-    Output: fig2.pdf at the top of BASE_DIR.
+    Output: fig2.pdf alongside this script.
     """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--result_dir', type=str,
+                        default='/Users/lukelyu/Desktop/data/simu/conformal_prediction/100k_result',
+                        help='100k result root containing {pipeline}/reg_r0/test_predictions.csv')
+    parser.add_argument('--pt_dir', type=str,
+                        default='/Users/lukelyu/Desktop/data/simu/point_estimate',
+                        help='Point-estimate root containing 5k_{sp,mp,lp}_result/summary.csv')
+    args = parser.parse_args()
+    result_dir = args.result_dir
+    pt_dir = args.pt_dir
+
     # -- Load R0 predictions (100k) and reshape to (n_outbreaks, 12) --------
     data = {}
     for pipeline in PIPELINES:
-        path = os.path.join(RESULT_DIR, pipeline, 'reg_r0',
+        path = os.path.join(result_dir, pipeline, 'reg_r0',
                             'test_predictions.csv')
         df = pd.read_csv(path)
         true, pred = df['true_reg_r0'].values, df['pred_reg_r0'].values
@@ -161,7 +171,7 @@ def main():
             miss1_accs[p].append((overlaps >= max(k - 1, 1)).mean())
 
     # -- Load 5k generalization data ----------------------------------------
-    gen_metrics = load_summary_metrics()
+    gen_metrics = load_summary_metrics(pt_dir)
 
     # -- Figure layout -------------------------------------------------------
     fig = plt.figure(figsize=(16, 15))
@@ -270,7 +280,7 @@ def main():
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
                ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.06))
 
-    out_path = os.path.join(BASE_DIR, 'fig2.pdf')
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig2.pdf')
     fig.savefig(out_path, bbox_inches='tight')
     print(f'Saved: {out_path}')
     plt.close()

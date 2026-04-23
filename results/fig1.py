@@ -240,7 +240,8 @@ def main():
         ax.set_xlim(ROW2_XLIMS[target])
         ax.set_ylim(0.5, 1.0)
         ax.set_box_aspect(1)
-        ax.set_xlabel('Mean Set Size' if is_cls else 'Mean Interval Width',
+        ax.set_xlabel('Prediction uncertainty (set size)' if is_cls
+                      else 'Prediction uncertainty (interval width)',
                       fontsize=10)
         ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
         ax.grid(True, alpha=0.3)

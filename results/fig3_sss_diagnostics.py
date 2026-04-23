@@ -15,12 +15,13 @@ For each predictor we compute, per graph:
   • rank of the true-top-SSS location in the predictor's ordering (1 = match)
   • Spearman ρ between true_SSS and the predictor across the graph's locations
 
-Outputs (under --output-dir, defaults to sss_predictions.parent):
+Outputs (under --output-dir, defaults to this script's directory):
   fig3_sss_diagnostics.pdf  — 2 × 4 grid: rank histograms / ρ histograms
   fig3_sss_diagnostics.csv  — one row per graph; both metrics × four predictors
   stdout                    — summary table with predictor value-range
 
 Usage:
+    python3 fig3_sss_diagnostics.py
     python3 fig3_sss_diagnostics.py \
         --sss-predictions /path/to/reg_sss/test_predictions.csv \
         --r0-predictions  /path/to/reg_r0/test_predictions.csv \
@@ -220,14 +221,19 @@ def plot(columns, titles, subtitles, output_path):
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--sss-predictions', required=True, type=Path)
-    p.add_argument('--r0-predictions',  required=True, type=Path)
-    p.add_argument('--nf-root',         required=True, type=Path,
+    p.add_argument('--sss-predictions', type=Path,
+                   default=Path('/Users/lukelyu/Desktop/data/simu/conformal_prediction/'
+                                '100k_result/stephy/reg_sss/test_predictions.csv'))
+    p.add_argument('--r0-predictions', type=Path,
+                   default=Path('/Users/lukelyu/Desktop/data/simu/conformal_prediction/'
+                                '100k_result/stephy/reg_r0/test_predictions.csv'))
+    p.add_argument('--nf-root', type=Path,
+                   default=Path('/Users/lukelyu/Desktop/data/simu'),
                    help='Root containing {batch}/{sim_id}_{nf,parameter}.csv')
     p.add_argument('--output-dir', type=Path, default=None)
     args = p.parse_args()
 
-    out_dir = args.output_dir or args.sss_predictions.parent
+    out_dir = args.output_dir or Path(__file__).resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sss_df = pd.read_csv(args.sss_predictions)
