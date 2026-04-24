@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """
-Figure 2 — Performance analysis (3-row layout).
+Figure 2 — Performance analysis (4-row layout).
 
   Row 1 (a):   Top-k identification accuracy (100k dataset)
   Row 2 (b):   R0 distribution by rank with gap violins (100k dataset)
-  Row 3 (c-f): Generalization across population scales (5k datasets)
+  Row 3 (c-f): Performance-space view across X1/X2/X3 population scales —
+               CP interval width / set size vs R2 / accuracy. Shows widths
+               stay flat while accuracy drops on OOD scales.
+  Row 4 (g-j): Empirical CP coverage across X1/X2/X3 — exposes the failure
+               that Row 3 hides: widths look stable but coverage collapses
+               under distribution shift, especially for the more confident
+               model. Nominal target shown as a dashed reference line.
 
 Usage:
     python3 fig2.py
-    python3 fig2.py --result_dir /path/to/100k_result --pt_dir /path/to/point_estimate
+    python3 fig2.py --result_dir /path/to/100k_result --gen_root /path/to/5k_parent_dir
 """
 
 import os
+import json
 import argparse
 import numpy as np
 import pandas as pd
@@ -19,6 +26,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
+from sklearn.metrics import r2_score
 
 # -- Shared style (consistent with fig1.py) ---------------------------------
 
@@ -54,6 +62,16 @@ TARGET_LABELS = {
     'reg_sss': 'Source-Sink Score (Reg.)',
     'cls_as':  'Ancestral State (Cls.)',
 }
+IS_CLASSIFICATION = {
+    'reg_r0': False, 'reg_rr': False,
+    'reg_sss': False, 'cls_as': True,
+}
+PRED_COLS = {
+    'reg_r0':  ('true_reg_r0',  'pred_reg_r0'),
+    'reg_rr':  ('true_reg_rr',  'pred_reg_rr'),
+    'reg_sss': ('true_reg_sss', 'pred_reg_sss'),
+    'cls_as':  ('true_ancestor', 'pred_ancestor'),
+}
 
 # -- Layout constants --------------------------------------------------------
 
@@ -61,11 +79,18 @@ NUM_LOCATIONS = 12
 VIOLIN_R0_COLOR = '#6baed6'
 GAP_COLOR = '#fc8d59'
 
-DATASETS = [
-    ('5k_sp_result', '\u00d70.33'),   # small population
-    ('5k_mp_result', '\u00d71'),      # medium population
-    ('5k_lp_result', '\u00d73'),      # large population
-]
+# Three population-scale datasets, each laid out like the 100k root:
+#   {gen_root}/5k_diverse_population_{scale}_result/{pipeline}/{label}/...
+SCALES = ['X1', 'X2', 'X3']
+SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
+
+# Per-task x-axis ranges for Row 3 (matches fig1 Row 2).
+ROW3_XLIMS = {
+    'reg_r0':  (0, 6),
+    'reg_rr':  (0, 0.2),
+    'reg_sss': (0, 2),
+    'cls_as':  (0, 12),
+}
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -90,17 +115,63 @@ def draw_iqr(ax, data_list, positions, linewidth=1.5):
                   linewidth=linewidth, zorder=4)
 
 
-def load_summary_metrics(pt_dir):
-    """Load R2/accuracy from each population-scale summary.csv under pt_dir."""
-    metrics = {p: {t: [] for t in TARGETS} for p in PIPELINES}
-    for ds_dir, _ in DATASETS:
-        df = pd.read_csv(os.path.join(pt_dir, ds_dir, 'summary.csv'))
-        for _, row in df.iterrows():
-            pipeline, label = row['pipeline'], row['label']
-            if label in TARGETS and pipeline in PIPELINES:
-                if row['metric_name'] in ('r2', 'accuracy'):
-                    metrics[pipeline][label].append(row['metric_value'])
-    return metrics
+def load_predictions(target, pipeline_dir):
+    """Return (true, pred) arrays from test_predictions.csv, or (None, None)."""
+    path = os.path.join(pipeline_dir, target, 'test_predictions.csv')
+    if not os.path.exists(path):
+        return None, None
+    df = pd.read_csv(path)
+    true_col, pred_col = PRED_COLS[target]
+    return df[true_col].values, df[pred_col].values
+
+
+def compute_score(target, true_vals, pred_vals):
+    """Return R2 (regression) or accuracy (classification), or None."""
+    if true_vals is None:
+        return None
+    mask = ~(np.isnan(true_vals.astype(float)) |
+             np.isnan(pred_vals.astype(float)))
+    t, p = true_vals[mask], pred_vals[mask]
+    if len(t) == 0:
+        return None
+    if IS_CLASSIFICATION[target]:
+        return float(np.mean(t.astype(int) == p.astype(int)))
+    return float(r2_score(t, p))
+
+
+def load_cp_metrics(target, pipeline_dir):
+    """Return cp_metrics dict from cp_metrics.json, or None."""
+    path = os.path.join(pipeline_dir, target, 'cp_metrics.json')
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def load_gen_points(gen_root):
+    """
+    For each (scale, pipeline, target), gather Row-3 and Row-4 inputs.
+
+    Returns: {target: [(scale, pipeline, x, y, coverage), ...]}, where x is
+    the CP interval width (regression) or mean set size (classification),
+    y is R2 / accuracy, and coverage is the empirical CP coverage on the
+    held-out test set for that scale.
+    """
+    out = {t: [] for t in TARGETS}
+    for scale in SCALES:
+        scale_root = os.path.join(gen_root, SCALE_DIR_TPL.format(scale=scale))
+        for pipeline in PIPELINES:
+            pdir = os.path.join(scale_root, pipeline)
+            for target in TARGETS:
+                score = compute_score(target, *load_predictions(target, pdir))
+                cp = load_cp_metrics(target, pdir)
+                if score is None or cp is None:
+                    continue
+                x_val = (cp['mean_set_size'] if IS_CLASSIFICATION[target]
+                         else cp['mean_interval_width'])
+                cov = cp.get('empirical_coverage')
+                out[target].append((scale, pipeline, x_val, score, cov))
+    return out
 
 
 def make_pipeline_handles():
@@ -123,19 +194,23 @@ def main():
     Row 1 (a): top-k accuracy across pipelines on the 100k dataset.
     Row 2 (b): R0 distribution per rank with gap violins (stephy only — single-
     pipeline view of rank structure, not a cross-pipeline comparison).
-    Row 3 (c-f): pipeline metrics across three population-scale datasets.
+    Row 3 (c-f): performance-space view (uncertainty vs metric) across three
+    population scales (X1/X2/X3); 6 points per panel.
+    Row 4 (g-j): empirical CP coverage vs population scale, with the nominal
+    target as a dashed reference line. Exposes coverage collapse under
+    distribution shift even when interval widths look stable.
     Output: fig2.pdf alongside this script.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--result_dir', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu/conformal_prediction/100k_result',
-                        help='100k result root containing {pipeline}/reg_r0/test_predictions.csv')
-    parser.add_argument('--pt_dir', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu/point_estimate',
-                        help='Point-estimate root containing 5k_{sp,mp,lp}_result/summary.csv')
+                        default='/Users/lukelyu/Desktop/data/simu/100k_diverse_population_result',
+                        help='100k result root containing {pipeline}/{label}/test_predictions.csv')
+    parser.add_argument('--gen_root', type=str,
+                        default='/Users/lukelyu/Desktop/data/simu',
+                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
     result_dir = args.result_dir
-    pt_dir = args.pt_dir
+    gen_root = args.gen_root
 
     # -- Load R0 predictions (100k) and reshape to (n_outbreaks, 12) --------
     data = {}
@@ -171,11 +246,11 @@ def main():
             miss1_accs[p].append((overlaps >= max(k - 1, 1)).mean())
 
     # -- Load 5k generalization data ----------------------------------------
-    gen_metrics = load_summary_metrics(pt_dir)
+    gen_points = load_gen_points(gen_root)
 
     # -- Figure layout -------------------------------------------------------
-    fig = plt.figure(figsize=(16, 15))
-    gs = gridspec.GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1],
+    fig = plt.figure(figsize=(16, 20))
+    gs = gridspec.GridSpec(4, 4, figure=fig, height_ratios=[1, 1, 1, 1],
                            hspace=0.35, wspace=0.35)
     pipeline_handles = make_pipeline_handles()
 
@@ -248,37 +323,84 @@ def main():
     ax_b.text(-0.04, 1.02, 'b', transform=ax_b.transAxes,
               fontsize=18, fontweight='bold', va='bottom', ha='left')
 
-    # -- Row 3 (c-f): 5k generalization across population scales ------------
-    x_ds = np.arange(len(DATASETS))
-    ds_labels = [lab for _, lab in DATASETS]
-
+    # -- Row 3 (c-f): 5k generalization in performance space ----------------
+    # 6 points per panel = 2 pipelines x 3 population scales (X1/X2/X3).
+    # Mirrors fig1 Row 2: x = CP uncertainty, y = R2 / accuracy.
     for col, target in enumerate(TARGETS):
         ax = fig.add_subplot(gs[2, col])
-        for pipeline in PIPELINES:
-            color, marker = PIPELINE_STYLE[pipeline]
-            vals = gen_metrics[pipeline][target]
-            if not vals:
-                continue
-            ax.plot(x_ds, vals, marker=marker, color=color, lw=2,
-                    markersize=8, markeredgecolor='white', markeredgewidth=0.8)
-            for xi, v in zip(x_ds, vals):
-                ax.annotate(f'{v:.3f}', (xi, v), textcoords='offset points',
-                            xytext=(0, 10), ha='center', fontsize=8,
-                            color=color)
+        is_cls = IS_CLASSIFICATION[target]
 
+        for scale, pipeline, x_val, y_val, _cov in gen_points[target]:
+            color, marker = PIPELINE_STYLE[pipeline]
+            ax.scatter(x_val, y_val, color=color, marker=marker,
+                       s=120, edgecolors='white', linewidths=0.5, zorder=3)
+            ax.annotate(scale, (x_val, y_val), textcoords='offset points',
+                        xytext=(6, -4), fontsize=8, color=color)
+
+        ax.set_xlim(ROW3_XLIMS[target])
         ax.set_ylim(0.5, 1.0)
+        ax.set_box_aspect(1)
+        ax.set_xlabel('Prediction uncertainty (set size)' if is_cls
+                      else 'Prediction uncertainty (interval width)',
+                      fontsize=10)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
         ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
-        ax.set_xticks(x_ds)
-        ax.set_xticklabels(ds_labels, fontsize=10)
-        ax.set_ylabel('Accuracy' if target == 'cls_as' else r'R$^2$',
-                       fontsize=12)
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.15, 1.02, chr(ord('c') + col), transform=ax.transAxes,
                 fontsize=18, fontweight='bold', va='bottom', ha='left')
 
+    # -- Row 4 (g-j): empirical CP coverage across population scales --------
+    # x-axis: scale (X1/X2/X3); y-axis: empirical coverage. Two lines per
+    # panel (one per pipeline). Dashed reference = coverage hit on X1, which
+    # is in-distribution for the calibration set and acts as the nominal.
+    scale_x = np.arange(len(SCALES))
+    for col, target in enumerate(TARGETS):
+        ax = fig.add_subplot(gs[3, col])
+
+        # Group by pipeline, ordered by scale
+        by_pipeline = {p: [None] * len(SCALES) for p in PIPELINES}
+        for scale, pipeline, _x, _y, cov in gen_points[target]:
+            if cov is not None and pipeline in by_pipeline:
+                by_pipeline[pipeline][SCALES.index(scale)] = cov
+
+        nominal = None
+        for pipeline in PIPELINES:
+            color, marker = PIPELINE_STYLE[pipeline]
+            ys = by_pipeline[pipeline]
+            if all(v is None for v in ys):
+                continue
+            ax.plot(scale_x, ys, marker=marker, color=color, lw=2,
+                    markersize=9, markeredgecolor='white', markeredgewidth=0.8,
+                    zorder=3)
+            for xi, v in zip(scale_x, ys):
+                if v is None:
+                    continue
+                ax.annotate(f'{v:.2f}', (xi, v), textcoords='offset points',
+                            xytext=(0, 8), ha='center', fontsize=8, color=color)
+            if nominal is None and ys[0] is not None:
+                nominal = ys[0]
+
+        if nominal is not None:
+            ax.axhline(nominal, color='#888888', ls='--', lw=1, zorder=1,
+                       label=f'X1 nominal ({nominal:.2f})')
+            ax.legend(loc='lower left', fontsize=8, frameon=False)
+
+        ax.set_xticks(scale_x)
+        ax.set_xticklabels(SCALES)
+        ax.set_xlim(-0.3, len(SCALES) - 0.7)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_box_aspect(1)
+        ax.set_xlabel('Population scale', fontsize=10)
+        ax.set_ylabel('Empirical CP coverage', fontsize=12)
+        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
+        ax.text(-0.15, 1.02, chr(ord('g') + col), transform=ax.transAxes,
+                fontsize=18, fontweight='bold', va='bottom', ha='left')
+
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.06))
+               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.04))
 
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig2.pdf')
     fig.savefig(out_path, bbox_inches='tight')
