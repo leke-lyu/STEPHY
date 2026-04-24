@@ -184,7 +184,7 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu/conformal_prediction/100k_result')
+                        default='/Users/lukelyu/Desktop/data/simu/100k_diverse_population_result')
     args = parser.parse_args()
     base_dir = args.base_dir
 
