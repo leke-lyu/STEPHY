@@ -32,8 +32,8 @@ set -uo pipefail
 
 # Locations / populations
 NUM_LOCS=12
-POP_MIN=25000
-POP_MAX=30000
+POP_MIN=20000
+POP_MAX=35000
 SHARED_POP_SIZE=false
 SEED_LOCATION="None"              # "None" = random, or 0..NUM_LOCS-1
 
@@ -41,7 +41,7 @@ SEED_LOCATION="None"              # "None" = random, or 0..NUM_LOCS-1
 R0_MIN=2
 R0_MAX=8
 SHARED_R0=false
-MAX_R0_DIFF=2
+MAX_R0_DIFF=4
 
 # Recovery rate (mu)
 MU_MIN=0.05
