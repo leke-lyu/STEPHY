@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-SSS diagnostics — what does the true Source/Sink Score actually track, and
-does our GNN beat the simulation-parameter oracles?
+SSS diagnostics (after training) — what does the true Source/Sink Score
+actually track on the GNN's test split, and does the trained model beat
+the simulation-parameter oracles?
 
 Four predictors, ranked per graph against true_reg_sss:
-  A  true reg_r0          (sim param; from --r0-predictions CSV)
-  B  MigIdx               (sim param; (outflow−inflow)/(outflow+inflow)
-                           from {batch}/{sim_id}_parameter.csv;
-                           same sign convention as SSS)
-  C  Initial_Population   (sim param; from {batch}/{sim_id}_nf.csv)
-  D  pred_reg_sss         (the GNN's prediction)
+
+  A  R0                 (sim param; per-location, from {batch}/{sim_id}_nf.csv)
+  B  MigIdx             (sim param; (outflow−inflow)/(outflow+inflow)
+                         from {batch}/{sim_id}_parameter.csv;
+                         same sign convention as SSS)
+  C  Initial_Population (sim param; from {batch}/{sim_id}_nf.csv)
+  D  pred_reg_sss       (the GNN's prediction)
 
 For each predictor we compute, per graph:
   • rank of the true-top-SSS location in the predictor's ordering (1 = match)
   • Spearman ρ between true_SSS and the predictor across the graph's locations
 
-Outputs (under --output-dir, defaults to this script's directory):
-  fig3_sss_diagnostics.pdf  — 2 × 4 grid: rank histograms / ρ histograms
-  fig3_sss_diagnostics.csv  — one row per graph; both metrics × four predictors
-  stdout                    — summary table with predictor value-range
+Outputs (next to this script, or under --output-dir):
+  sss_diagnostics_after_training.pdf  — 2 × 4 grid: rank / ρ histograms
+  sss_diagnostics_after_training.csv  — one row per graph; both metrics × four predictors
+  stdout                              — true-SSS summary + per-predictor table
 
 Usage:
-    python3 fig3_sss_diagnostics.py
-    python3 fig3_sss_diagnostics.py \
+    python3 sss_diagnostics_after_training.py \
         --sss-predictions /path/to/reg_sss/test_predictions.csv \
-        --r0-predictions  /path/to/reg_r0/test_predictions.csv \
         --nf-root         /path/to/batches/
 """
 
@@ -60,8 +60,8 @@ _MIG_RE = re.compile(r'^migration_loc_(\d+)_to_loc_(\d+)$')
 # ─── per-graph metrics ─────────────────────────────────────────────────────
 
 def per_graph_stats(df, value_col, target_col='true_reg_sss'):
-    """For each graph: rank of top-target location in `value_col` ordering,
-    plus Spearman ρ between target and value across the graph's locations."""
+    """For each graph: rank of top-target location in `value_col`, plus
+    Spearman ρ between target and value across the graph's locations."""
     rows = []
     for _, grp in df.groupby(GROUP, sort=False):
         rank = grp[value_col].rank(ascending=False, method='min')
@@ -71,6 +71,9 @@ def per_graph_stats(df, value_col, target_col='true_reg_sss'):
         else:
             rho, _ = spearmanr(grp[target_col], grp[value_col])
         rows.append({
+            'batch': grp['batch'].iloc[0],
+            'sim_id': grp['sim_id'].iloc[0],
+            'tree_idx': grp['tree_idx'].iloc[0],
             'num_locations': len(grp),
             'top_sss_rank_in_x': int(rank.loc[top_idx]),
             'spearman_rho': rho,
@@ -78,31 +81,7 @@ def per_graph_stats(df, value_col, target_col='true_reg_sss'):
     return pd.DataFrame(rows)
 
 
-# ─── per-(batch, sim_id) value loaders ─────────────────────────────────────
-
-def _join_per_sim(sss_df, nf_root, filename_tpl, value_col, loader):
-    """Attach a per-location value (loaded from one file per sim) onto sss_df.
-
-    `loader(path)` must return a DataFrame with columns ['Location', value_col].
-    Returns the joined DataFrame; raises if any location is missing.
-    """
-    cache, pieces = {}, []
-    for (batch, sim_id), grp in sss_df.groupby(['batch', 'sim_id'], sort=False):
-        key = (batch, sim_id)
-        if key not in cache:
-            path = Path(nf_root) / str(batch) / filename_tpl.format(sim_id=sim_id)
-            if not path.exists():
-                raise FileNotFoundError(f"Missing file: {path}")
-            cache[key] = loader(path)
-        merged = grp.merge(cache[key], left_on='location_idx',
-                           right_on='Location', how='left')
-        if merged[value_col].isna().any():
-            missing = merged.loc[merged[value_col].isna(),
-                                 'location_idx'].tolist()
-            raise ValueError(f"Missing locations {missing} for ({batch},{sim_id})")
-        pieces.append(merged)
-    return pd.concat(pieces, ignore_index=True)
-
+# ─── data loading ──────────────────────────────────────────────────────────
 
 def _load_migration_index(parameter_path):
     """Per-location MigIdx = (outflow − inflow) / (outflow + inflow) from
@@ -127,35 +106,45 @@ def _load_migration_index(parameter_path):
     return pd.DataFrame({'Location': locs, 'mig_idx': mig})
 
 
-# ─── predictor columns ─────────────────────────────────────────────────────
+def _join_per_sim(sss_df, nf_root, filename_tpl, value_cols, loader):
+    """Attach per-location values (loaded from one file per sim) onto sss_df.
 
-def build_population_column(sss_df, nf_root):
-    joined = _join_per_sim(
-        sss_df, nf_root, '{sim_id}_nf.csv', 'Initial_Population',
-        lambda p: pd.read_csv(p)[['Location', 'Initial_Population']])
-    return (per_graph_stats(joined, 'Initial_Population'),
-            joined['Initial_Population'])
+    `loader(path)` must return a DataFrame with columns ['Location', *value_cols].
+    Returns the joined DataFrame; raises if any location is missing.
+    """
+    cache, pieces = {}, []
+    for (batch, sim_id), grp in sss_df.groupby(['batch', 'sim_id'], sort=False):
+        key = (batch, sim_id)
+        if key not in cache:
+            path = Path(nf_root) / str(batch) / filename_tpl.format(sim_id=sim_id)
+            if not path.exists():
+                raise FileNotFoundError(f"Missing file: {path}")
+            cache[key] = loader(path)
+        merged = grp.merge(cache[key], left_on='location_idx',
+                           right_on='Location', how='left')
+        for col in value_cols:
+            if merged[col].isna().any():
+                missing = merged.loc[merged[col].isna(),
+                                     'location_idx'].tolist()
+                raise ValueError(f"Missing '{col}' for locations {missing} in "
+                                 f"({batch},{sim_id})")
+        pieces.append(merged)
+    return pd.concat(pieces, ignore_index=True)
 
 
-def build_migidx_column(sss_df, nf_root):
-    joined = _join_per_sim(
-        sss_df, nf_root, '{sim_id}_parameter.csv', 'mig_idx',
+def attach_oracles(sss_df, nf_root):
+    """Join R0, Initial_Population (from _nf.csv) and MigIdx (from
+    _parameter.csv) onto each row of sss_df. Returns the enriched frame."""
+    enriched = _join_per_sim(
+        sss_df, nf_root, '{sim_id}_nf.csv', ['R0', 'Initial_Population'],
+        lambda p: pd.read_csv(p)[['Location', 'R0', 'Initial_Population']])
+    enriched = _join_per_sim(
+        enriched, nf_root, '{sim_id}_parameter.csv', ['mig_idx'],
         _load_migration_index)
-    return per_graph_stats(joined, 'mig_idx'), joined['mig_idx']
-
-
-def build_r0_column(sss_df, r0_path):
-    r0 = pd.read_csv(r0_path)[KEY + ['true_reg_r0']]
-    merged = sss_df[KEY + ['true_reg_sss']].merge(
-        r0, on=KEY, how='inner', validate='one_to_one')
-    if len(merged) != len(sss_df):
-        raise ValueError(
-            f"Join row-count mismatch: sss={len(sss_df)} joined={len(merged)}")
-    return per_graph_stats(merged, 'true_reg_r0'), merged['true_reg_r0']
-
-
-def build_pred_column(sss_df):
-    return per_graph_stats(sss_df, 'pred_reg_sss'), sss_df['pred_reg_sss']
+    return enriched.rename(columns={
+        'R0': 'r0',
+        'Initial_Population': 'init_pop',
+    })
 
 
 # ─── plotting ──────────────────────────────────────────────────────────────
@@ -208,8 +197,8 @@ def plot(columns, titles, subtitles, output_path):
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
 
     fig.suptitle(
-        'What does the true Source/Sink Score track?\n'
-        'Simulation-parameter oracles (R0, MigIdx, Population) vs GNN prediction',
+        'What does the true Source/Sink Score track? (after training)\n'
+        'Simulation-parameter oracles (R0, MigIdx, Initial_Population) vs GNN prediction',
         y=1.00, fontsize=14)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches='tight')
@@ -219,17 +208,25 @@ def plot(columns, titles, subtitles, output_path):
 # ─── entrypoint ────────────────────────────────────────────────────────────
 
 def main():
+    """
+    Build the post-training SSS diagnostics figure on the GNN's test split.
+
+    Loads the trained pipeline's reg_sss/test_predictions.csv, joins
+    per-location R0 and Initial_Population (from {sim_id}_nf.csv) and a
+    per-location MigIdx (from {sim_id}_parameter.csv), then ranks each of
+    R0 / MigIdx / Initial_Population / pred_reg_sss against true_reg_sss
+    per (batch, sim_id, tree_idx) graph.
+
+    Output: sss_diagnostics_after_training.{pdf,csv} alongside this script,
+    plus a stdout summary table.
+    """
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--sss-predictions', type=Path,
-                   default=Path('/Users/lukelyu/Desktop/data/simu/conformal_prediction/'
-                                '100k_result/stephy/reg_sss/test_predictions.csv'))
-    p.add_argument('--r0-predictions', type=Path,
-                   default=Path('/Users/lukelyu/Desktop/data/simu/conformal_prediction/'
-                                '100k_result/stephy/reg_r0/test_predictions.csv'))
-    p.add_argument('--nf-root', type=Path,
-                   default=Path('/Users/lukelyu/Desktop/data/simu'),
-                   help='Root containing {batch}/{sim_id}_{nf,parameter}.csv')
+    p.add_argument('--sss-predictions', type=Path, required=True,
+                   help='reg_sss/test_predictions.csv from a trained pipeline')
+    p.add_argument('--nf-root', type=Path, required=True,
+                   help='Root containing batch_*/{sim_id}_nf.csv and '
+                        '{sim_id}_parameter.csv')
     p.add_argument('--output-dir', type=Path, default=None)
     args = p.parse_args()
 
@@ -241,36 +238,41 @@ def main():
         if col not in sss_df.columns:
             raise ValueError(f"reg_sss predictions missing '{col}'")
 
+    enriched = attach_oracles(sss_df, args.nf_root)
+
     builders = [
-        ('R0',         lambda: build_r0_column(sss_df, args.r0_predictions)),
-        ('MigIdx',     lambda: build_migidx_column(sss_df, args.nf_root)),
-        ('Population', lambda: build_population_column(sss_df, args.nf_root)),
-        ('pred_SSS',   lambda: build_pred_column(sss_df)),
+        ('R0',                'r0',           'A. SSS vs R0'),
+        ('MigIdx',            'mig_idx',      'B. SSS vs MigIdx'),
+        ('Initial_Population','init_pop',     'C. SSS vs Initial_Population'),
+        ('pred_SSS',          'pred_reg_sss', 'D. SSS vs our prediction'),
     ]
+    cols = [per_graph_stats(enriched, col) for _, col, _ in builders]
     short_names = ['r0', 'migidx', 'pop', 'pred']
-    titles = ['A. SSS vs R0', 'B. SSS vs MigIdx',
-              'C. SSS vs Population', 'D. SSS vs our prediction']
+    subtitles = [name for name, _, _ in builders]
+    titles = [t for _, _, t in builders]
 
-    cols, value_series = zip(*(build() for _, build in builders))
-    subtitles = [name for name, _ in builders]
-
-    fig_path = out_dir / 'fig3_sss_diagnostics.pdf'
+    fig_path = out_dir / 'sss_diagnostics_after_training.pdf'
     plot(cols, titles, subtitles, fig_path)
 
-    per_graph = sss_df.drop_duplicates(GROUP)[GROUP].reset_index(drop=True)
+    per_graph = cols[0][GROUP].copy()
     for short, df in zip(short_names, cols):
         per_graph[f'rank_in_{short}'] = df['top_sss_rank_in_x'].values
         per_graph[f'rho_{short}']     = df['spearman_rho'].values
-    csv_path = out_dir / 'fig3_sss_diagnostics.csv'
+    csv_path = out_dir / 'sss_diagnostics_after_training.csv'
     per_graph.to_csv(csv_path, index=False)
 
-    print(f"{'Predictor':<12} {'N':>6} {'range':>26} {'rank-1':>8} "
-          f"{'ρ median':>10} {'ρ mean':>9} {'ρ>0':>7}")
-    for name, df, vals in zip(subtitles, cols, value_series):
+    sss_vals = enriched['true_reg_sss'].dropna()
+    n_graphs = enriched.groupby(GROUP, sort=False).ngroups
+    print(f"True SSS  N_graphs={n_graphs}  N_loc={len(sss_vals)}  "
+          f"range=[{sss_vals.min():.4g}, {sss_vals.max():.4g}]  "
+          f"mean={sss_vals.mean():.3f}  median={sss_vals.median():.3f}")
+    print(f"{'Predictor':<20} {'N_graphs':>9} {'N_loc':>7} {'range':>26} "
+          f"{'rank-1':>8} {'ρ median':>10} {'ρ mean':>9} {'ρ>0':>7}")
+    for (name, col, _), df in zip(builders, cols):
         rhos = df['spearman_rho'].dropna()
-        v = vals.dropna()
+        v = enriched[col].dropna()
         rng = f"[{v.min():.4g}, {v.max():.4g}]"
-        print(f"{name:<12} {len(df):>6} {rng:>26} "
+        print(f"{name:<20} {len(df):>9} {len(v):>7} {rng:>26} "
               f"{(df['top_sss_rank_in_x'] == 1).mean():>8.1%} "
               f"{rhos.median():>10.3f} {rhos.mean():>9.3f} "
               f"{(rhos > 0).mean():>7.1%}")

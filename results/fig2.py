@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Figure 2 — Performance analysis (4-row layout).
+Figure 2 — Performance analysis (3-row layout).
 
-  Row 1 (a):   Top-k identification accuracy (100k dataset)
-  Row 2 (b):   R0 distribution by rank with gap violins (100k dataset)
-  Row 3 (c-f): Performance-space view across X1/X2/X3 population scales —
-               CP interval width / set size vs R2 / accuracy. Shows widths
-               stay flat while accuracy drops on OOD scales.
-  Row 4 (g-j): Empirical CP coverage across X1/X2/X3 — exposes the failure
-               that Row 3 hides: widths look stable but coverage collapses
-               under distribution shift, especially for the more confident
-               model. Nominal target shown as a dashed reference line.
+  Row 1 (a):   Top-k identification accuracy (100k dataset).
+  Row 2 (b):   R0 distribution by rank with gap violins (100k dataset).
+  Row 3 (c-f): Per-task headline metric (R2 for regression, accuracy for
+               classification) across X1/X2/X3 population scales. One line
+               per pipeline. Shows the raw performance shift under
+               population-scale change; the CP / coverage angle lives in
+               cp_coverage_collapse.py.
 
 Usage:
     python3 fig2.py
@@ -18,7 +16,6 @@ Usage:
 """
 
 import os
-import json
 import argparse
 import numpy as np
 import pandas as pd
@@ -79,18 +76,8 @@ NUM_LOCATIONS = 12
 VIOLIN_R0_COLOR = '#6baed6'
 GAP_COLOR = '#fc8d59'
 
-# Three population-scale datasets, each laid out like the 100k root:
-#   {gen_root}/5k_diverse_population_{scale}_result/{pipeline}/{label}/...
 SCALES = ['X1', 'X2', 'X3']
 SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
-
-# Per-task x-axis ranges for Row 3 (matches fig1 Row 2).
-ROW3_XLIMS = {
-    'reg_r0':  (0, 6),
-    'reg_rr':  (0, 0.2),
-    'reg_sss': (0, 2),
-    'cls_as':  (0, 12),
-}
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -139,38 +126,20 @@ def compute_score(target, true_vals, pred_vals):
     return float(r2_score(t, p))
 
 
-def load_cp_metrics(target, pipeline_dir):
-    """Return cp_metrics dict from cp_metrics.json, or None."""
-    path = os.path.join(pipeline_dir, target, 'cp_metrics.json')
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        return json.load(f)
+def load_scale_scores(gen_root):
+    """For each (target, pipeline): list of scores aligned with SCALES.
 
-
-def load_gen_points(gen_root):
+    Returns: {target: {pipeline: [score_X1, score_X2, score_X3]}}.
+    Missing (scale, pipeline) entries are stored as None.
     """
-    For each (scale, pipeline, target), gather Row-3 and Row-4 inputs.
-
-    Returns: {target: [(scale, pipeline, x, y, coverage), ...]}, where x is
-    the CP interval width (regression) or mean set size (classification),
-    y is R2 / accuracy, and coverage is the empirical CP coverage on the
-    held-out test set for that scale.
-    """
-    out = {t: [] for t in TARGETS}
-    for scale in SCALES:
+    out = {t: {p: [None] * len(SCALES) for p in PIPELINES} for t in TARGETS}
+    for i, scale in enumerate(SCALES):
         scale_root = os.path.join(gen_root, SCALE_DIR_TPL.format(scale=scale))
         for pipeline in PIPELINES:
             pdir = os.path.join(scale_root, pipeline)
             for target in TARGETS:
                 score = compute_score(target, *load_predictions(target, pdir))
-                cp = load_cp_metrics(target, pdir)
-                if score is None or cp is None:
-                    continue
-                x_val = (cp['mean_set_size'] if IS_CLASSIFICATION[target]
-                         else cp['mean_interval_width'])
-                cov = cp.get('empirical_coverage')
-                out[target].append((scale, pipeline, x_val, score, cov))
+                out[target][pipeline][i] = score
     return out
 
 
@@ -189,16 +158,15 @@ def make_pipeline_handles():
 
 def main():
     """
-    Build Figure 2 — top-k identification, R0 rank structure, and 5k generalization.
+    Build Figure 2 — top-k identification, R0 rank structure, and per-task
+    headline metric across population scales.
 
     Row 1 (a): top-k accuracy across pipelines on the 100k dataset.
-    Row 2 (b): R0 distribution per rank with gap violins (stephy only — single-
-    pipeline view of rank structure, not a cross-pipeline comparison).
-    Row 3 (c-f): performance-space view (uncertainty vs metric) across three
-    population scales (X1/X2/X3); 6 points per panel.
-    Row 4 (g-j): empirical CP coverage vs population scale, with the nominal
-    target as a dashed reference line. Exposes coverage collapse under
-    distribution shift even when interval widths look stable.
+    Row 2 (b): R0 distribution per rank with gap violins (stephy split —
+    true values are identical across pipelines).
+    Row 3 (c-f): R2 (regression) / accuracy (classification) vs population
+    scale (X1/X2/X3), one line per pipeline.
+
     Output: fig2.pdf alongside this script.
     """
     parser = argparse.ArgumentParser()
@@ -226,8 +194,6 @@ def main():
         }
 
     n_outbreaks = data['stephy']['true'].shape[0]
-    # Row 2 visualizes true-R0 rank structure on the stephy split only; true
-    # values are identical across pipelines since they share the same test set.
     sorted_desc = np.sort(data['stephy']['true'], axis=1)[:, ::-1]
     gap_data = [sorted_desc[:, i] - sorted_desc[:, i + 1]
                 for i in range(NUM_LOCATIONS - 1)]
@@ -245,12 +211,12 @@ def main():
             exact_accs[p].append((overlaps == k).mean())
             miss1_accs[p].append((overlaps >= max(k - 1, 1)).mean())
 
-    # -- Load 5k generalization data ----------------------------------------
-    gen_points = load_gen_points(gen_root)
+    # -- Load per-scale R2 / accuracy ---------------------------------------
+    scale_scores = load_scale_scores(gen_root)
 
     # -- Figure layout -------------------------------------------------------
-    fig = plt.figure(figsize=(16, 20))
-    gs = gridspec.GridSpec(4, 4, figure=fig, height_ratios=[1, 1, 1, 1],
+    fig = plt.figure(figsize=(16, 15))
+    gs = gridspec.GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1],
                            hspace=0.35, wspace=0.35)
     pipeline_handles = make_pipeline_handles()
 
@@ -312,10 +278,10 @@ def main():
     ax_b.legend(handles=[
         mpatches.Patch(color=VIOLIN_R0_COLOR, alpha=0.7, label='R0 per rank'),
         mpatches.Patch(color=GAP_COLOR, alpha=0.6,
-                       label='\u0394R0 between consecutive ranks'),
+                       label='ΔR0 between consecutive ranks'),
     ], loc='upper right')
     ax_b.set_xlabel('Location rank (by true R0)')
-    ax_b.set_ylabel('R0  /  \u0394R0')
+    ax_b.set_ylabel('R0  /  ΔR0')
     ax_b.set_xticks(ranks)
     ax_b.set_ylim(-0.5, 9)
     ax_b.grid(True, alpha=0.3)
@@ -323,51 +289,15 @@ def main():
     ax_b.text(-0.04, 1.02, 'b', transform=ax_b.transAxes,
               fontsize=18, fontweight='bold', va='bottom', ha='left')
 
-    # -- Row 3 (c-f): 5k generalization in performance space ----------------
-    # 6 points per panel = 2 pipelines x 3 population scales (X1/X2/X3).
-    # Mirrors fig1 Row 2: x = CP uncertainty, y = R2 / accuracy.
+    # -- Row 3 (c-f): per-task R2 / accuracy across population scales -------
+    scale_x = np.arange(len(SCALES))
     for col, target in enumerate(TARGETS):
         ax = fig.add_subplot(gs[2, col])
         is_cls = IS_CLASSIFICATION[target]
 
-        for scale, pipeline, x_val, y_val, _cov in gen_points[target]:
-            color, marker = PIPELINE_STYLE[pipeline]
-            ax.scatter(x_val, y_val, color=color, marker=marker,
-                       s=120, edgecolors='white', linewidths=0.5, zorder=3)
-            ax.annotate(scale, (x_val, y_val), textcoords='offset points',
-                        xytext=(6, -4), fontsize=8, color=color)
-
-        ax.set_xlim(ROW3_XLIMS[target])
-        ax.set_ylim(0.5, 1.0)
-        ax.set_box_aspect(1)
-        ax.set_xlabel('Prediction uncertainty (set size)' if is_cls
-                      else 'Prediction uncertainty (interval width)',
-                      fontsize=10)
-        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
-        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_axisbelow(True)
-        ax.text(-0.15, 1.02, chr(ord('c') + col), transform=ax.transAxes,
-                fontsize=18, fontweight='bold', va='bottom', ha='left')
-
-    # -- Row 4 (g-j): empirical CP coverage across population scales --------
-    # x-axis: scale (X1/X2/X3); y-axis: empirical coverage. Two lines per
-    # panel (one per pipeline). Dashed reference = coverage hit on X1, which
-    # is in-distribution for the calibration set and acts as the nominal.
-    scale_x = np.arange(len(SCALES))
-    for col, target in enumerate(TARGETS):
-        ax = fig.add_subplot(gs[3, col])
-
-        # Group by pipeline, ordered by scale
-        by_pipeline = {p: [None] * len(SCALES) for p in PIPELINES}
-        for scale, pipeline, _x, _y, cov in gen_points[target]:
-            if cov is not None and pipeline in by_pipeline:
-                by_pipeline[pipeline][SCALES.index(scale)] = cov
-
-        nominal = None
         for pipeline in PIPELINES:
             color, marker = PIPELINE_STYLE[pipeline]
-            ys = by_pipeline[pipeline]
+            ys = scale_scores[target][pipeline]
             if all(v is None for v in ys):
                 continue
             ax.plot(scale_x, ys, marker=marker, color=color, lw=2,
@@ -378,25 +308,18 @@ def main():
                     continue
                 ax.annotate(f'{v:.2f}', (xi, v), textcoords='offset points',
                             xytext=(0, 8), ha='center', fontsize=8, color=color)
-            if nominal is None and ys[0] is not None:
-                nominal = ys[0]
-
-        if nominal is not None:
-            ax.axhline(nominal, color='#888888', ls='--', lw=1, zorder=1,
-                       label=f'X1 nominal ({nominal:.2f})')
-            ax.legend(loc='lower left', fontsize=8, frameon=False)
 
         ax.set_xticks(scale_x)
         ax.set_xticklabels(SCALES)
         ax.set_xlim(-0.3, len(SCALES) - 0.7)
-        ax.set_ylim(0.0, 1.05)
+        ax.set_ylim(0.5, 1.0)
         ax.set_box_aspect(1)
         ax.set_xlabel('Population scale', fontsize=10)
-        ax.set_ylabel('Empirical CP coverage', fontsize=12)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
         ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
-        ax.text(-0.15, 1.02, chr(ord('g') + col), transform=ax.transAxes,
+        ax.text(-0.15, 1.02, chr(ord('c') + col), transform=ax.transAxes,
                 fontsize=18, fontweight='bold', va='bottom', ha='left')
 
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,

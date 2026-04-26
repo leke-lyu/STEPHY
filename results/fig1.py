@@ -162,8 +162,7 @@ def plot_classification(ax, true_vals, pred_vals, target):
 
     cfg = AXIS_CFG[target]
     ax.set_xlim(cfg['lims']);  ax.set_xticks(cfg['ticks'])
-    ax.set_ylim(cfg.get('ylims', (0, 1)))
-    ax.set_yticks(cfg.get('yticks', [0, 0.2, 0.4, 0.6, 0.8, 1.0]))
+    ax.set_ylim(cfg['ylims']);  ax.set_yticks(cfg['yticks'])
     ax.set_xlabel('State', fontsize=10)
     ax.set_ylabel('Accuracy', fontsize=10)
 

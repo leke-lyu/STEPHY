@@ -1,19 +1,20 @@
-# fig2 — interpretation
+# cp_coverage_collapse — interpretation
 
-Companion notes for `fig2.pdf`. Numbers below come from
-`/Users/lukelyu/Desktop/data/simu/{100k,5k}_diverse_population*_result/.../cp_metrics.json`
+Companion notes for `cp_coverage_collapse.pdf`. Numbers below come from
+`/Users/lukelyu/Desktop/data/simu/5k_diverse_population_X{1,2,3}_result/.../cp_metrics.json`
 and the corresponding `test_predictions.csv`.
 
 ## Layout
 
-- **Row 1 (a)** — Top-k identification accuracy on the 100k dataset.
-- **Row 2 (b)** — R0 distribution per rank with gap violins (stephy split; true
-  values shared across pipelines).
-- **Row 3 (c–f)** — Performance-space view (CP interval width / set size on
+- **Row 1 (a–d)** — Performance-space view (CP interval width / set size on
   x-axis vs R²/accuracy on y-axis), with 6 points per panel: 2 pipelines ×
   3 OOD population scales (X1, X2, X3).
-- **Row 4 (g–j)** — Empirical CP coverage vs population scale, with X1's
+- **Row 2 (e–h)** — Empirical CP coverage vs population scale, with X1's
   coverage shown as a dashed reference line.
+
+The companion file `fig2.pdf` carries the in-distribution top-k, R0 rank
+structure, and raw R²/accuracy-by-scale views; this document focuses on
+what CP itself does (and stops doing) under shift.
 
 ## What the X1/X2/X3 datasets are
 
@@ -37,8 +38,8 @@ clean OOD probe along a single axis.
 
 Across X1 → X2 → X3:
 
-- **Accuracy drops** (Row 3, y-axis) — expected for OOD shift.
-- **CP interval widths stay essentially flat** (Row 3, x-axis):
+- **Accuracy drops** (Row 1, y-axis) — expected for OOD shift.
+- **CP interval widths stay essentially flat** (Row 1, x-axis):
 
   | target | pipeline | X1 | X2 | X3 |
   |---|---|---|---|---|
@@ -48,7 +49,7 @@ Across X1 → X2 → X3:
   | reg_sss (width)| stephy   | 0.34 | 0.34 | 0.33 |
   | cls_as (set size)| stephy | 3.15 | 3.32 | 3.43 |
 
-- **Empirical coverage collapses** (Row 4):
+- **Empirical coverage collapses** (Row 2):
 
   | target | pipeline | X1 cov | X2 cov | X3 cov |
   |---|---|---|---|---|
@@ -109,7 +110,7 @@ X1.
 
 ## The accuracy ↔ robustness Pareto
 
-The pattern in Row 4 is striking: **stephy degrades faster than CBLV-CNN**
+The pattern in Row 2 is striking: **stephy degrades faster than CBLV-CNN**
 on every regression task. This is the same mechanism at the model level:
 
 - stephy is more accurate on X1 → its quantile heads emit sharper spreads
