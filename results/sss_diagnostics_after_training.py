@@ -4,38 +4,53 @@ SSS diagnostics (after training) — what does the true Source/Sink Score
 actually track on the GNN's test split, and does the trained model beat
 the simulation-parameter oracles?
 
-Four predictors, ranked per graph against true_reg_sss:
+Predictors, ranked per graph against true_reg_sss:
 
   A  R0                 (sim param; per-location, from {batch}/{sim_id}_nf.csv)
   B  MigIdx             (sim param; (outflow−inflow)/(outflow+inflow)
                          from {batch}/{sim_id}_parameter.csv;
                          same sign convention as SSS)
   C  Initial_Population (sim param; from {batch}/{sim_id}_nf.csv)
-  D  pred_reg_sss       (the GNN's prediction)
+  D  pred_reg_sss       (the GNN's prediction; only shown with
+                         --prediction_result)
 
 For each predictor we compute, per graph:
   • rank of the true-top-SSS location in the predictor's ordering (1 = match)
   • Spearman ρ between true_SSS and the predictor across the graph's locations
 
 Outputs (next to this script, or under --output-dir):
-  sss_diagnostics_after_training.pdf  — 2 × 4 grid: rank / ρ histograms
-  sss_diagnostics_after_training.csv  — one row per graph; both metrics × four predictors
-  stdout                              — true-SSS summary + per-predictor table
+  sss_diagnostics_after_training.pdf  — 2 × {3 or 4} grid: rank / ρ histograms
+  sss_diagnostics_after_training.csv  — one row per graph; both metrics × predictors
+  sss_diagnostics_after_training.out  — tee'd stdout (true-SSS summary + table)
 
 Usage:
     python3 sss_diagnostics_after_training.py \
         --sss-predictions /path/to/reg_sss/test_predictions.csv \
         --nf-root         /path/to/batches/
+    # add --prediction_result to also include the GNN prediction (panel D).
 """
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
+
+
+class _Tee:
+    """Forward writes to multiple text streams (terminal + .out logfile)."""
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 plt.rcParams.update({
     'font.family': 'sans-serif',
@@ -196,10 +211,6 @@ def plot(columns, titles, subtitles, output_path):
                     family='monospace',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
 
-    fig.suptitle(
-        'What does the true Source/Sink Score track? (after training)\n'
-        'Simulation-parameter oracles (R0, MigIdx, Initial_Population) vs GNN prediction',
-        y=1.00, fontsize=14)
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches='tight')
     plt.close(fig)
@@ -213,12 +224,11 @@ def main():
 
     Loads the trained pipeline's reg_sss/test_predictions.csv, joins
     per-location R0 and Initial_Population (from {sim_id}_nf.csv) and a
-    per-location MigIdx (from {sim_id}_parameter.csv), then ranks each of
-    R0 / MigIdx / Initial_Population / pred_reg_sss against true_reg_sss
-    per (batch, sim_id, tree_idx) graph.
+    per-location MigIdx (from {sim_id}_parameter.csv), then ranks the three
+    sim-parameter oracles — and, with --prediction_result, also the GNN's
+    pred_reg_sss — against true_reg_sss per (batch, sim_id, tree_idx) graph.
 
-    Output: sss_diagnostics_after_training.{pdf,csv} alongside this script,
-    plus a stdout summary table.
+    Outputs alongside this script: sss_diagnostics_after_training.{pdf,csv,out}.
     """
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -228,13 +238,24 @@ def main():
                    help='Root containing batch_*/{sim_id}_nf.csv and '
                         '{sim_id}_parameter.csv')
     p.add_argument('--output-dir', type=Path, default=None)
+    p.add_argument('--prediction_result', action='store_true',
+                   help='Include the GNN prediction (panel D) alongside the '
+                        'three sim-param oracles (A, B, C). Default: off — '
+                        'only A, B, C are shown.')
     args = p.parse_args()
 
     out_dir = args.output_dir or Path(__file__).resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    log_path = out_dir / 'sss_diagnostics_after_training.out'
+    log_f = open(log_path, 'w')
+    sys.stdout = _Tee(sys.__stdout__, log_f)
+
     sss_df = pd.read_csv(args.sss_predictions)
-    for col in KEY + ['true_reg_sss', 'pred_reg_sss']:
+    required_cols = KEY + ['true_reg_sss']
+    if args.prediction_result:
+        required_cols.append('pred_reg_sss')
+    for col in required_cols:
         if col not in sss_df.columns:
             raise ValueError(f"reg_sss predictions missing '{col}'")
 
@@ -244,12 +265,14 @@ def main():
         ('R0',                'r0',           'A. SSS vs R0'),
         ('MigIdx',            'mig_idx',      'B. SSS vs MigIdx'),
         ('Initial_Population','init_pop',     'C. SSS vs Initial_Population'),
-        ('pred_SSS',          'pred_reg_sss', 'D. SSS vs our prediction'),
     ]
+    short_names = ['r0', 'migidx', 'pop']
+    if args.prediction_result:
+        builders.append(('pred_SSS', 'pred_reg_sss', 'D. SSS vs our prediction'))
+        short_names.append('pred')
     cols = [per_graph_stats(enriched, col) for _, col, _ in builders]
-    short_names = ['r0', 'migidx', 'pop', 'pred']
-    subtitles = [name for name, _, _ in builders]
-    titles = [t for _, _, t in builders]
+    subtitles = [name for name, *_ in builders]
+    titles = [t for *_, t in builders]
 
     fig_path = out_dir / 'sss_diagnostics_after_training.pdf'
     plot(cols, titles, subtitles, fig_path)
@@ -278,6 +301,9 @@ def main():
               f"{(rhos > 0).mean():>7.1%}")
     print(f"Saved: {fig_path}")
     print(f"Saved: {csv_path}")
+    print(f"Saved: {log_path}")
+    sys.stdout = sys.__stdout__
+    log_f.close()
 
 
 if __name__ == '__main__':

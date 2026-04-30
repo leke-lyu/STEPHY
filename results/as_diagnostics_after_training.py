@@ -28,9 +28,22 @@ Usage:
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+
+class _Tee:
+    """Forward writes to multiple text streams (terminal + .out logfile)."""
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 KEY = ['batch', 'sim_id', 'tree_idx']
 TIP_RE = re.compile(
@@ -137,14 +150,12 @@ def predictor_summary(df, predictor_col, target_col='true_ancestor'):
     Rows where `predictor_col` is NaN/None are dropped (the predictor was
     undefined for that sim — e.g., ambiguous spillover_loc).
     """
-    valid = df[predictor_col].notna()
-    n = int(valid.sum())
+    sub = df[df[predictor_col].notna()]
+    n = len(sub)
     if n == 0:
         return {'n': 0, 'top1': float('nan')}
-    sub = df.loc[valid]
-    pred = sub[predictor_col].astype(int).values
-    true = sub[target_col].astype(int).values
-    return {'n': n, 'top1': float((pred == true).mean())}
+    correct = (sub[predictor_col].astype(int) == sub[target_col].astype(int)).mean()
+    return {'n': n, 'top1': float(correct)}
 
 
 # ─── entrypoint ────────────────────────────────────────────────────────────
@@ -178,6 +189,10 @@ def main():
     out_dir = args.output_dir or Path(__file__).resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    log_path = out_dir / 'as_diagnostics_after_training.out'
+    log_f = open(log_path, 'w')
+    sys.stdout = _Tee(sys.__stdout__, log_f)
+
     pred_df = pd.read_csv(args.as_predictions)
     for col in KEY + ['true_ancestor', 'pred_ancestor']:
         if col not in pred_df.columns:
@@ -200,15 +215,14 @@ def main():
     enriched.to_csv(csv_path, index=False)
 
     print(f"{'Predictor':<20} {'N':>8} {'top-1':>8}")
-    for name, col in [
-        ('spillover_loc',    'spillover_loc'),
-        ('earliest_tip_loc', 'earliest_tip_loc'),
-        ('pred_ancestor',    'pred_ancestor'),
-    ]:
+    for col in ['spillover_loc', 'earliest_tip_loc', 'pred_ancestor']:
         s = predictor_summary(enriched, col)
-        print(f"{name:<20} {s['n']:>8} {s['top1']:>7.1%}")
+        print(f"{col:<20} {s['n']:>8} {s['top1']:>7.1%}")
 
     print(f"Saved: {csv_path}")
+    print(f"Saved: {log_path}")
+    sys.stdout = sys.__stdout__
+    log_f.close()
 
 
 if __name__ == '__main__':

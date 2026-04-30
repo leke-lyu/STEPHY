@@ -174,8 +174,9 @@ def main():
     gen_points = load_gen_points(args.gen_root)
     pipeline_handles = make_pipeline_handles()
 
-    fig = plt.figure(figsize=(16, 10))
-    gs = gridspec.GridSpec(2, 4, figure=fig, hspace=0.35, wspace=0.35)
+    fig = plt.figure(figsize=(18, 10))
+    gs = gridspec.GridSpec(2, 4, figure=fig,
+                           height_ratios=[1, 1], hspace=0.05, wspace=0.35)
 
     # -- Row 1 (a-d): performance-space view --------------------------------
     for col, target in enumerate(TARGETS):
@@ -241,14 +242,13 @@ def main():
         ax.set_box_aspect(1)
         ax.set_xlabel('Population scale', fontsize=10)
         ax.set_ylabel('Empirical CP coverage', fontsize=12)
-        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.15, 1.02, chr(ord('e') + col), transform=ax.transAxes,
                 fontsize=18, fontweight='bold', va='bottom', ha='left')
 
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, -0.01))
+               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.03))
 
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             'cp_coverage_collapse.pdf')
