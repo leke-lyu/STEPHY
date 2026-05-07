@@ -41,8 +41,7 @@ from matplotlib.lines import Line2D
 #                └── pair1011 → tip10, tip11
 # ---------------------------------------------------------------------
 
-# Tip y-coordinates (evenly spaced) — wider step so the tree fills the
-# square panel.
+# Tip y-coordinates (evenly spaced).
 TIP_Y = [0.4 + 0.6 * i for i in range(12)]
 
 # Tip terminal x and event type (4 sampled at the "present" x = 8.0,
@@ -85,6 +84,24 @@ CHILDREN = {
 }
 
 SEED_X = -0.3   # where the seed lineage starts on the time axis
+
+# ---------------------------------------------------------------------
+# Publication font hierarchy. Mirrors the constants in
+# simulation_engine_4loc.py so the composite (conceptual.py) reads at
+# uniform weight across panels (a), (b), and (c).
+# ---------------------------------------------------------------------
+FS_EVENT_TAG = 14   # per-event "Loc a" tags next to markers
+FS_MIG_TAG   = 14   # "Loc a -> Loc b" migration direction
+FS_INDEX_CAP = 16   # "index case" caption above the gold star
+FS_TIME      = 16   # "Time" axis label
+FS_LEGEND    = 16   # legend below the tree
+
+LW_BRANCH    = 2.8   # infectious-lineage branch width
+MS_INF       = 18    # internal infection (blue circle)
+MS_SAMP      = 20    # sampled tip (green circle)
+MS_REM       = 19    # removed tip (grey X)
+MS_MIG       = 17    # migration event (purple diamond)
+MS_INDEX     = 34    # index-case star at the seed
 
 # ---------------------------------------------------------------------
 # Per-event location tracking — keeps the conceptual tree consistent
@@ -145,7 +162,7 @@ def draw_tree(ax, with_legend=True):
     # ---- Seed segment (root lineage before first infection) --------
     root_x, root_y = NODES['root_inf']
     ax.plot([SEED_X, root_x], [root_y, root_y],
-            color=C_I, lw=2.2, solid_capstyle='round', zorder=1)
+            color=C_I, lw=LW_BRANCH, solid_capstyle='round', zorder=1)
 
     # ---- Bifurcation branches (vertical at parent + horizontal to each child)
     for parent, kids in CHILDREN.items():
@@ -153,7 +170,7 @@ def draw_tree(ax, with_legend=True):
         c1_y, c2_y = kids[0][1], kids[1][1]
 
         # Vertical at parent's x, connecting children's y's
-        ax.plot([px, px], [c1_y, c2_y], color=C_I, lw=2.2, zorder=1)
+        ax.plot([px, px], [c1_y, c2_y], color=C_I, lw=LW_BRANCH, zorder=1)
 
         # Horizontal segment to each child
         for child_label, child_y in kids:
@@ -162,17 +179,18 @@ def draw_tree(ax, with_legend=True):
             else:
                 child_x = NODES[child_label][0]
             ax.plot([px, child_x], [child_y, child_y],
-                    color=C_I, lw=2.2, solid_capstyle='round', zorder=1)
+                    color=C_I, lw=LW_BRANCH, solid_capstyle='round',
+                    zorder=1)
 
     # ---- Internal infection markers (blue dots) + location tags -----
     # Location label sits to the right of the marker, matching the
     # placement used for sampled/removed tips. Label color matches the
     # event type (blue for infection).
     for label, (x, y) in NODES.items():
-        ax.plot(x, y, 'o', color=C_INF, markersize=14, zorder=3,
-                markeredgecolor='white', markeredgewidth=1.5)
+        ax.plot(x, y, 'o', color=C_INF, markersize=MS_INF, zorder=3,
+                markeredgecolor='white', markeredgewidth=1.6)
         loc = NODE_LOCATIONS[label]
-        ax.text(x + 0.20, y, f'Loc {loc}', fontsize=10,
+        ax.text(x + 0.24, y, f'Loc {loc}', fontsize=FS_EVENT_TAG,
                 fontweight='bold', style='italic',
                 color=C_INF, ha='left', va='center', zorder=4)
 
@@ -181,46 +199,47 @@ def draw_tree(ax, with_legend=True):
     for i in range(12):
         x, y = TIP_END_X[i], TIP_Y[i]
         if TIP_TYPES[i] == 'sampled':
-            ax.plot(x, y, 'o', color=C_SAMP, markersize=16, zorder=3,
-                    markeredgecolor='white', markeredgewidth=1.6)
+            ax.plot(x, y, 'o', color=C_SAMP, markersize=MS_SAMP, zorder=3,
+                    markeredgecolor='white', markeredgewidth=1.8)
             label_color = C_SAMP
         else:
-            ax.plot(x, y, 'X', color=C_REM, markersize=15, zorder=3,
-                    markeredgecolor='white', markeredgewidth=1.5)
+            ax.plot(x, y, 'X', color=C_REM, markersize=MS_REM, zorder=3,
+                    markeredgecolor='white', markeredgewidth=1.6)
             label_color = C_REM
         loc = TIP_LOCATIONS[i]
-        ax.text(x + 0.22, y, f'Loc {loc}', fontsize=10,
+        ax.text(x + 0.26, y, f'Loc {loc}', fontsize=FS_EVENT_TAG,
                 fontweight='bold', style='italic',
                 color=label_color, ha='left', va='center', zorder=4)
 
     # ---- Migration events (purple) + direction tags -----------------
     for mx, my, from_loc, to_loc in MIGRATIONS_INFO:
-        ax.plot([mx, mx], [my - 0.22, my + 0.22],
-                color=C_MIG, lw=2.0, linestyle='--', zorder=2)
-        ax.plot(mx, my, marker='D', color=C_MIG, markersize=13, zorder=3,
-                markeredgecolor='white', markeredgewidth=1.5)
+        ax.plot([mx, mx], [my - 0.26, my + 0.26],
+                color=C_MIG, lw=2.4, linestyle='--', zorder=2)
+        ax.plot(mx, my, marker='D', color=C_MIG, markersize=MS_MIG, zorder=3,
+                markeredgecolor='white', markeredgewidth=1.6)
         # Show the direction (e.g. "Loc a -> Loc b") above the diamond.
-        ax.text(mx, my + 0.42,
+        ax.text(mx, my + 0.48,
                 f'Loc {from_loc} $\\rightarrow$ Loc {to_loc}',
-                fontsize=10, fontweight='bold', style='italic',
+                fontsize=FS_MIG_TAG, fontweight='bold', style='italic',
                 color=C_MIG, ha='center', va='bottom', zorder=4)
 
     # ---- Index-case marker at the root (gold star) ------------------
     # Matches the gold star used in panels (a) and (c): identifies
     # Location a as the true seed of the outbreak.
-    ax.plot(SEED_X, root_y, marker='*', markersize=28,
+    ax.plot(SEED_X, root_y, marker='*', markersize=MS_INDEX,
             color='#FFC107', markeredgecolor='#8A6500',
-            markeredgewidth=1.4, zorder=3)
-    ax.text(SEED_X, root_y + 0.55, 'index case',
+            markeredgewidth=1.6, zorder=3)
+    ax.text(SEED_X, root_y + 0.65, 'index case',
             ha='center', va='bottom',
-            fontsize=12, fontweight='bold', style='italic',
+            fontsize=FS_INDEX_CAP, fontweight='bold', style='italic',
             color='#8A6500')
 
     # ---- Cosmetics ---------------------------------------------------
-    # Square data extent + aspect='equal' so the saved PDF matches the
-    # simulation_engine_4loc.pdf dimensions when both use figsize=(12,12).
-    ax.set_xlim(-1.5, 9.0)
-    ax.set_ylim(-1.5, 9.0)
+    # ylim_bottom is tight against the "Time" label below the time
+    # arrow (no extra whitespace) so the legend can dock right under
+    # the timescale via bbox_to_anchor=(_, -0.005).
+    ax.set_xlim(-1.6, 9.2)
+    ax.set_ylim(-1.35, 9.2)
     ax.set_aspect('equal')
     for sp in ('top', 'right', 'left', 'bottom'):
         ax.spines[sp].set_visible(False)
@@ -228,28 +247,34 @@ def draw_tree(ax, with_legend=True):
     ax.set_yticks([])
 
     # Time arrow at the bottom of the tree content (just below tip 0)
-    ax.annotate('', xy=(8.7, -0.5), xytext=(SEED_X, -0.5),
-                arrowprops=dict(arrowstyle='->', color='black', lw=1.4))
-    ax.text(0.5 * (SEED_X + 8.7), -0.95, 'Time',
-            ha='center', fontsize=12)
+    ax.annotate('', xy=(8.7, -0.55), xytext=(SEED_X, -0.55),
+                arrowprops=dict(arrowstyle='->', color='black', lw=2.0))
+    ax.text(0.5 * (SEED_X + 8.7), -1.05, 'Time',
+            ha='center', fontsize=FS_TIME, fontweight='bold')
 
     # ---- Legend ------------------------------------------------------
     if with_legend:
         handles = [
-            Line2D([0], [0], color=C_I, lw=3.0,
+            Line2D([0], [0], color=C_I, lw=3.6,
                    label='Infectious lineage (I)'),
-            Line2D([0], [0], marker='o', color=C_INF, markersize=15,
+            Line2D([0], [0], marker='o', color=C_INF, markersize=18,
                    linestyle='none', label='Infection event'),
-            Line2D([0], [0], marker='D', color=C_MIG, markersize=14,
+            Line2D([0], [0], marker='D', color=C_MIG, markersize=17,
                    linestyle='none', label='Migration event'),
-            Line2D([0], [0], marker='o', color=C_SAMP, markersize=16,
+            Line2D([0], [0], marker='o', color=C_SAMP, markersize=20,
                    linestyle='none', label='Sampling event'),
-            Line2D([0], [0], marker='X', color=C_REM, markersize=16,
+            Line2D([0], [0], marker='X', color=C_REM, markersize=20,
                    linestyle='none', label='Removal event'),
         ]
+        # Center the legend horizontally on the time arrow's midpoint
+        # (not the axes midpoint), so the legend column lines up with
+        # the timescale beneath the tree.
+        x_lo, x_hi = ax.get_xlim()
+        time_mid_x = 0.5 * (SEED_X + 8.7)
+        legend_x_axes = (time_mid_x - x_lo) / (x_hi - x_lo)
         ax.legend(handles=handles, loc='upper center',
-                  bbox_to_anchor=(0.5, -0.04),
-                  frameon=False, fontsize=12, ncol=3,
+                  bbox_to_anchor=(legend_x_axes, -0.005),
+                  frameon=False, fontsize=FS_LEGEND, ncol=3,
                   handletextpad=0.9, handlelength=2.5,
                   columnspacing=2.0, labelspacing=0.9)
 

@@ -14,7 +14,7 @@ classification target (which node is the index case).
 
 Two arrows connect the panels:
   (a) -> (b)   stochastic simulation / Gillespie algorithm
-  (b) -> (c)   tree -> graph encoding / GNN training
+  (b) -> (c)   graph encoding / GNN training
 
 Saves conceptual.pdf next to this script.
 """
@@ -45,6 +45,16 @@ from simulation_engine_4loc import draw_engine, I_POS        # noqa: E402
 from simulated_tree_concept import draw_tree                 # noqa: E402
 
 
+# ---------------------------------------------------------------------
+# Publication font hierarchy (matches simulation_engine_4loc.py and
+# simulated_tree_concept.py constants).
+# ---------------------------------------------------------------------
+FS_ARROW_TOP    = 20   # pipeline-stage caption above each arrow
+FS_ARROW_BOT    = 17   # algorithm subtitle below each arrow (italic)
+FS_PANEL_C_PARM = 18   # per-node "R_e, mu, SSS ?" regression caption
+FS_PANEL_C_QUES = 19   # "Which location is the index case?" caption
+
+
 def _draw_arrow_block(ax, top_text, bottom_text):
     """Draw a left-to-right arrow on `ax` with two stacked captions."""
     ax.set_xlim(0, 1)
@@ -53,18 +63,23 @@ def _draw_arrow_block(ax, top_text, bottom_text):
     ax.axis('off')
 
     ax.add_patch(FancyArrowPatch(
-        (0.08, 0.5), (0.92, 0.5),
-        arrowstyle='-|>,head_width=0.45,head_length=0.7',
-        mutation_scale=28, lw=3.0,
+        (0.06, 0.5), (0.94, 0.5),
+        arrowstyle='-|>,head_width=0.5,head_length=0.8',
+        mutation_scale=36, lw=3.6,
         color='#1f1f1f', zorder=2,
         capstyle='round',
     ))
-    ax.text(0.5, 0.575, top_text,
-            ha='center', va='bottom',
-            fontsize=14, fontweight='bold', color='#111111')
-    ax.text(0.5, 0.425, bottom_text,
-            ha='center', va='top',
-            fontsize=12, style='italic', color='#444444')
+    # clip_on=False: matplotlib's default subplot padding shrinks the
+    # arrow axes inside its GridSpec slot, so a long caption (e.g.
+    # "stochastic simulation") can be wider than the inner axes box
+    # even when it fits inside the slot. Disabling clipping lets the
+    # caption render in full instead of cutting the trailing letter.
+    ax.text(0.5, 0.585, top_text,
+            ha='center', va='bottom', clip_on=False,
+            fontsize=FS_ARROW_TOP, fontweight='bold', color='#111111')
+    ax.text(0.5, 0.415, bottom_text,
+            ha='center', va='top', clip_on=False,
+            fontsize=FS_ARROW_BOT, style='italic', color='#444444')
 
 
 def main():
@@ -72,12 +87,15 @@ def main():
     out_pdf = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "conceptual.pdf")
 
-    # Each panel renders at ~11.5 in wide so it matches the standalone
+    # Each main panel renders at ~12 in wide so it matches the standalone
     # simulation_engine_4loc.pdf and simulated_tree_concept.pdf sizes.
-    # Tight wspace + narrow arrow columns keep panels close together.
+    # Arrow columns are intentionally narrow (~2.4 in) — the captions
+    # are wider than this and overhang into the adjacent panel slots,
+    # which is fine because clip_on=False is set on the arrow text and
+    # the adjacent panel labels sit well inside their xlim margins.
     fig = plt.figure(figsize=(40, 12))
     gs = GridSpec(1, 5, figure=fig,
-                  width_ratios=[1.0, 0.18, 1.0, 0.18, 1.0],
+                  width_ratios=[1.0, 0.20, 1.0, 0.20, 1.0],
                   wspace=0.0)
 
     # ---- Panel (a): full simulation engine --------------------------
@@ -94,10 +112,10 @@ def main():
     ax_b = fig.add_subplot(gs[0, 2])
     draw_tree(ax_b, with_legend=True)
 
-    # ---- Arrow 2: tree -> graph encoding + GNN training ------------
+    # ---- Arrow 2: graph encoding + GNN training --------------------
     ax_arr2 = fig.add_subplot(gs[0, 3])
     _draw_arrow_block(ax_arr2,
-                      top_text=r'tree $\rightarrow$ graph encoding',
+                      top_text='graph encoding',
                       bottom_text='GNN training')
 
     # ---- Panel (c): K4 network with GNN prediction tasks ------------
@@ -118,10 +136,10 @@ def main():
     # so it doesn't overlap with the migration K4 edges).
     param_text = r'$R_e,\ \mu,\ \mathrm{SSS}\ ?$'
     param_offset = {
-        'a': (0,  1.9),   # above the top node
-        'b': (1.9, 0),    # right of the right node
-        'c': (0, -1.9),   # below the bottom node
-        'd': (-1.9, 0),   # left of the left node
+        'a': (0,  2.2),   # above the top node
+        'b': (2.2, 0),    # right of the right node
+        'c': (0, -2.2),   # below the bottom node
+        'd': (-2.2, 0),   # left of the left node
     }
     param_align = {
         'a': dict(ha='center', va='bottom'),
@@ -133,22 +151,22 @@ def main():
         cx, cy = I_POS[loc]
         dx, dy = param_offset[loc]
         ax_c.text(cx + dx, cy + dy, param_text,
-                  fontsize=13, fontweight='bold', color='#333333',
-                  **param_align[loc])
+                  fontsize=FS_PANEL_C_PARM, fontweight='bold',
+                  color='#333333', **param_align[loc])
 
     # Classification question: which node is the index case?
     # The star is drawn with matplotlib's '*' marker (separate from the
     # text) so it shares the exact same glyph as the index-case stars
     # in panels (a) and (b).
     a_cx, a_cy = I_POS['a']
-    ax_c.text(a_cx - 0.4, a_cy + 3.4,
+    ax_c.text(a_cx - 0.5, a_cy + 3.7,
               'Which location is the index case?',
               ha='right', va='center',
-              fontsize=14, fontweight='bold', style='italic',
+              fontsize=FS_PANEL_C_QUES, fontweight='bold', style='italic',
               color='#8A6500')
-    ax_c.plot(a_cx + 0.5, a_cy + 3.4, marker='*', markersize=26,
+    ax_c.plot(a_cx + 0.6, a_cy + 3.7, marker='*', markersize=34,
               color='#FFC107', markeredgecolor='#8A6500',
-              markeredgewidth=1.4, zorder=4)
+              markeredgewidth=1.6, zorder=4)
 
     fig.savefig(out_pdf, bbox_inches='tight')
     print(f"Saved: {out_pdf}")

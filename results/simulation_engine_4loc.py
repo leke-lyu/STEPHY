@@ -48,12 +48,14 @@ for _loc, _angle in ANGLES.items():
     R_POS[_loc]    = (_cx - DX_RS,    _cy + DY_RS)
     SAMP_POS[_loc] = (_cx + DX_RS,    _cy + DY_RS)
 
-# Location labels: radially outward from the centre of the figure
+# Location labels: radially outward from the centre of the figure.
+# Gap chosen so the publication-weight (fontsize=20) "Location x"
+# caption doesn't visually clip into the I-node circle outline.
 LOC_LABEL_POS = {
-    'a': (0,  LOC_R + DY_S + 1.4),                   # above N location
-    'b': (LOC_R + 2.4, 0),                           # right of E location
-    'c': (0, -(LOC_R + abs(DY_RS) + 1.4)),           # below S location
-    'd': (-(LOC_R + 2.4), 0),                        # left of W location
+    'a': (0,  LOC_R + DY_S + 2.0),                   # above N location
+    'b': (LOC_R + 3.2, 0),                           # right of E location
+    'c': (0, -(LOC_R + abs(DY_RS) + 2.0)),           # below S location
+    'd': (-(LOC_R + 3.2), 0),                        # left of W location
 }
 
 # K4 migration edges: 4 perimeter (diamond sides) + 2 cross diagonals.
@@ -65,17 +67,31 @@ MIG_PAIRS = [
     ('b', 'd'),                                        # horizontal cross
 ]
 
-COMP_RADIUS = 0.55   # S, R, Sampled compartments — small (visual weight
+COMP_RADIUS = 0.60   # S, R, Sampled compartments — small (visual weight
                      # is on the I graph nodes, not the per-location SIR)
-I_RADIUS    = 1.05   # I compartments are the graph nodes — bigger
+I_RADIUS    = 1.15   # I compartments are the graph nodes — bigger
+
+# ---------------------------------------------------------------------
+# Publication font hierarchy. Centralized so panel (a)/(c) text reads
+# at consistent weight when this engine is composed into conceptual.py.
+# ---------------------------------------------------------------------
+FS_NODE_I    = 26   # I_a / Loc_a labels inside the big graph nodes
+FS_NODE_LOC  = 22   # same node when relabeled Loc_a (slightly smaller —
+                    #   "Loc" + subscript is wider than "I" alone)
+FS_COMP      = 16   # S_a, R_a labels
+FS_COMP_SMP  = 13   # Smp_a (longer string, smaller to fit)
+FS_EVENT     = 17   # infection / removal / sampling italic labels
+FS_MIG       = 19   # "migration" label at the K4 cross-diagonal
+FS_LOC_LABEL = 20   # "Location a/b/c/d" captions
+FS_INDEX_CAP = 18   # "index case" caption next to the gold star
 
 
 # ---------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------
 
-def draw_compartment(ax, pos, color, label, fontsize=14, radius=COMP_RADIUS,
-                     linewidth=2.4):
+def draw_compartment(ax, pos, color, label, fontsize=FS_COMP,
+                     radius=COMP_RADIUS, linewidth=2.8):
     """Draw a labeled circular compartment with a colored outline."""
     x, y = pos
     ax.add_patch(Circle((x, y), radius, facecolor='white',
@@ -93,12 +109,11 @@ def edge_endpoints(p1, p2, r1=COMP_RADIUS, r2=COMP_RADIUS):
             (p2[0] - ux * r2, p2[1] - uy * r2))
 
 
-def draw_arrow(ax, p1, p2, color, lw=1.8, curve=0.0, style='-', mutation=18):
-    """Single directed arrow from p1 to p2."""
+def draw_arrow(ax, p1, p2, color, lw=2.2):
+    """Single straight directed arrow from p1 to p2."""
     ax.add_patch(FancyArrowPatch(
-        p1, p2, arrowstyle='-|>', mutation_scale=mutation,
-        connectionstyle=f'arc3,rad={curve}',
-        color=color, lw=lw, linestyle=style, zorder=2,
+        p1, p2, arrowstyle='-|>', mutation_scale=22,
+        color=color, lw=lw, zorder=2,
     ))
 
 
@@ -126,11 +141,12 @@ def draw_engine(ax, show_compartments=True,
     inside any Axes (standalone figure or subplot panel).
     """
     # Colors match simulation_engine.pdf
-    C_S    = '#2E7DBF'
-    C_I    = '#D04F4F'
-    C_R    = '#888888'
-    C_SAMP = '#3CB371'
-    C_MIG  = '#7B4FB4'
+    C_S     = '#2E7DBF'
+    C_I     = '#D04F4F'
+    C_R     = '#888888'
+    C_SAMP  = '#3CB371'
+    C_MIG   = '#7B4FB4'
+    C_INDEX = '#FFC107'   # gold star marking the index case
 
     # ---- Location bubbles (dashed grey ellipses around each stack) ---
     if show_compartments:
@@ -140,14 +156,11 @@ def draw_engine(ax, show_compartments=True,
                                  facecolor='none', edgecolor='#aaaaaa',
                                  linewidth=1.0, linestyle=':', zorder=1))
 
-    # Index-case marker color (used by the star + label below)
-    C_INDEX = '#FFC107'
-
     # ---- Per-location compartments and within-location arrows --------
     # I compartments (the graph nodes) are always drawn. S/R/Sampled
     # and their arrows are only drawn in full mode.
     use_I_label = (node_prefix == 'I')
-    node_fontsize = 22 if use_I_label else 17
+    node_fontsize = FS_NODE_I if use_I_label else FS_NODE_LOC
     for loc in 'abcd':
         if use_I_label:
             node_label = f'$I_{loc}$'
@@ -155,58 +168,59 @@ def draw_engine(ax, show_compartments=True,
             node_label = f'$\\mathrm{{{node_prefix}}}_{loc}$'
         draw_compartment(ax, I_POS[loc], C_I, node_label,
                          fontsize=node_fontsize, radius=I_RADIUS,
-                         linewidth=4.0)
+                         linewidth=4.5)
 
         if show_compartments:
             draw_compartment(ax, S_POS[loc],    C_S,    f'$S_{loc}$',
-                             fontsize=13)
+                             fontsize=FS_COMP)
             draw_compartment(ax, R_POS[loc],    C_R,    f'$R_{loc}$',
-                             fontsize=13)
+                             fontsize=FS_COMP)
             draw_compartment(ax, SAMP_POS[loc], C_SAMP,
-                             f'$\\mathrm{{Smp}}_{loc}$', fontsize=10)
+                             f'$\\mathrm{{Smp}}_{loc}$',
+                             fontsize=FS_COMP_SMP)
 
             # Infection (S -> I): I edge is at the bigger I_RADIUS
             s_end, i_top = edge_endpoints(S_POS[loc], I_POS[loc],
                                           r1=COMP_RADIUS, r2=I_RADIUS)
-            draw_arrow(ax, s_end, i_top, C_S, lw=2.0)
+            draw_arrow(ax, s_end, i_top, C_S, lw=2.4)
 
             # Removal (I -> R)
             i_end_r, r_in = edge_endpoints(I_POS[loc], R_POS[loc],
                                            r1=I_RADIUS, r2=COMP_RADIUS)
-            draw_arrow(ax, i_end_r, r_in, C_R, lw=1.6)
+            draw_arrow(ax, i_end_r, r_in, C_R, lw=2.0)
 
             # Sampling (I -> Sampled)
             i_end_s, s_in = edge_endpoints(I_POS[loc], SAMP_POS[loc],
                                            r1=I_RADIUS, r2=COMP_RADIUS)
-            draw_arrow(ax, i_end_s, s_in, C_SAMP, lw=1.6)
+            draw_arrow(ax, i_end_s, s_in, C_SAMP, lw=2.0)
 
     # One italic event-type label apiece (using location a as the example).
     # White bbox so the label stays readable when migration lines cross it.
     if show_compartments:
-        label_bbox = dict(boxstyle='round,pad=0.2', facecolor='white',
+        label_bbox = dict(boxstyle='round,pad=0.25', facecolor='white',
                           edgecolor='none', alpha=0.95)
 
         s_end, i_top = edge_endpoints(S_POS['a'], I_POS['a'],
                                       r1=COMP_RADIUS, r2=I_RADIUS)
-        ax.text(s_end[0] + 0.35, 0.5 * (s_end[1] + i_top[1]),
+        ax.text(s_end[0] + 0.40, 0.5 * (s_end[1] + i_top[1]),
                 'infection', ha='left', va='center',
-                fontsize=13, color=C_S, style='italic',
+                fontsize=FS_EVENT, color=C_S, style='italic',
                 bbox=label_bbox, zorder=5)
 
         i_end, r_in = edge_endpoints(I_POS['a'], R_POS['a'],
                                      r1=I_RADIUS, r2=COMP_RADIUS)
-        ax.text(0.5 * (i_end[0] + r_in[0]) - 0.25,
+        ax.text(0.5 * (i_end[0] + r_in[0]) - 0.30,
                 0.5 * (i_end[1] + r_in[1]),
                 'removal', ha='right', va='center',
-                fontsize=13, color=C_R, style='italic',
+                fontsize=FS_EVENT, color=C_R, style='italic',
                 bbox=label_bbox, zorder=5)
 
         i_end, s_in = edge_endpoints(I_POS['a'], SAMP_POS['a'],
                                      r1=I_RADIUS, r2=COMP_RADIUS)
-        ax.text(0.5 * (i_end[0] + s_in[0]) + 0.25,
+        ax.text(0.5 * (i_end[0] + s_in[0]) + 0.30,
                 0.5 * (i_end[1] + s_in[1]),
                 'sampling', ha='left', va='center',
-                fontsize=13, color=C_SAMP, style='italic',
+                fontsize=FS_EVENT, color=C_SAMP, style='italic',
                 bbox=label_bbox, zorder=5)
 
     # ---- Migration K4 graph (straight bidirectional edges) -----------
@@ -224,17 +238,17 @@ def draw_engine(ax, show_compartments=True,
                                 r1=I_RADIUS, r2=I_RADIUS)
         for start, end in [(p1, p2), (p2, p1)]:
             ax.add_patch(FancyArrowPatch(
-                start, end, arrowstyle='-|>', mutation_scale=26,
+                start, end, arrowstyle='-|>', mutation_scale=32,
                 connectionstyle='arc3,rad=0',
-                color=C_MIG, lw=4.5, linestyle='-', zorder=2,
+                color=C_MIG, lw=5.0, linestyle='-', zorder=2,
             ))
 
     # "migration" italic label, placed at the crossing of the K4
     # diagonals — needs a white bbox so the lines that cross under it
     # don't visually run through the text.
-    ax.text(0.0, 0.55, 'migration', ha='center', va='bottom',
-            fontsize=15, color=C_MIG, style='italic', fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
+    ax.text(0.0, 0.65, 'migration', ha='center', va='bottom',
+            fontsize=FS_MIG, color=C_MIG, style='italic', fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.30', facecolor='white',
                       edgecolor='none', alpha=0.95),
             zorder=5)
 
@@ -243,23 +257,23 @@ def draw_engine(ax, show_compartments=True,
         for loc in 'abcd':
             lx, ly = LOC_LABEL_POS[loc]
             ax.text(lx, ly, f'Location {loc}', ha='center', va='center',
-                    fontsize=16, fontweight='bold', color='#444444')
+                    fontsize=FS_LOC_LABEL, fontweight='bold', color='#444444')
 
         # Index-case marker: gold star + "index case" caption next to
         # the Location a label. Marks Loc a as the true seed of the
         # simulation; matches the classification star used in panel (c).
         a_lx, a_ly = LOC_LABEL_POS['a']
-        ax.plot(a_lx - 2.7, a_ly, marker='*', markersize=34,
+        ax.plot(a_lx - 3.1, a_ly, marker='*', markersize=42,
                 color=C_INDEX, markeredgecolor='#8A6500',
-                markeredgewidth=1.4, zorder=4)
-        ax.text(a_lx + 1.9, a_ly, 'index case',
+                markeredgewidth=1.6, zorder=4)
+        ax.text(a_lx + 2.2, a_ly, 'index case',
                 ha='left', va='center',
-                fontsize=14, fontweight='bold', style='italic',
+                fontsize=FS_INDEX_CAP, fontweight='bold', style='italic',
                 color='#8A6500')
 
     # ---- Cosmetics ---------------------------------------------------
-    ax.set_xlim(-9.0, 9.0)
-    ax.set_ylim(-9.5, 9.5)
+    ax.set_xlim(-10.5, 10.5)
+    ax.set_ylim(-10.5, 10.5)
     ax.set_aspect('equal')
     ax.axis('off')
 
