@@ -2,4 +2,5 @@ tasks/
 __pycache__/
 *.pyc
 results/*.pdf
+results/*.out
 .DS_Store
