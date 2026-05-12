@@ -985,7 +985,7 @@ def draw_k4_graph(ax, target_loc='a',
                   edge_color='#9a9a9a', edge_lw=3.2,
                   hl_color=C_HL, dim_color=C_DIM,
                   hl_edge='#7a1f1f', dim_edge='#5a5a5a',
-                  label_fontsize=None):
+                  label_fontsize=None, draw_edges=True):
     """Diamond-layout K4 with 4 location nodes."""
     if positions is None:
         positions = {
@@ -997,13 +997,14 @@ def draw_k4_graph(ax, target_loc='a',
     if label_fontsize is None:
         label_fontsize = max(14, int(0.42 * node_size))
     locs = ['a', 'b', 'c', 'd']
-    for i in range(len(locs)):
-        for j in range(i + 1, len(locs)):
-            x0, y0 = positions[locs[i]]
-            x1, y1 = positions[locs[j]]
-            ax.plot([x0, x1], [y0, y1],
-                    color=edge_color, lw=edge_lw,
-                    zorder=1, solid_capstyle='round')
+    if draw_edges:
+        for i in range(len(locs)):
+            for j in range(i + 1, len(locs)):
+                x0, y0 = positions[locs[i]]
+                x1, y1 = positions[locs[j]]
+                ax.plot([x0, x1], [y0, y1],
+                        color=edge_color, lw=edge_lw,
+                        zorder=1, solid_capstyle='round')
     for l in locs:
         x, y = positions[l]
         fc = hl_color if l == target_loc else dim_color
@@ -1545,7 +1546,381 @@ def _draw_panels_bcde(fig, subplotspec, args):
 
 
 # =====================================================================
-# SECTION G: Main entry point.
+# SECTION G: Panel (f) composition (bottom row, right-to-left flow).
+# Graph (from e) -> message passing -> MLP head -> 4 output heads.
+# =====================================================================
+
+# Panel (f) palette.
+C_AGG     = "#5C8DBF"   # aggregated neighbor embedding (cool blue)
+C_SELF    = C_NODE_FEAT  # self embedding (reuses node-feature blue)
+C_MLP     = "#F2A93B"    # MLP head blocks (reuses CONV gold)
+C_BAR_REG = "#2E7DBF"
+C_BAR_CLS = "#3CB371"
+C_INT_CP  = "#7E57C2"
+
+# Unified with panel b-e fonts:
+#  - section titles  FS_KDE_HDR + 4 = 32  (matches "Per-node encoder"
+#    / "Per-edge encoder" headers in panels c/d)
+#  - feature labels  22                   (matches "Loc_a node feature
+#    (1x128)" and "edge feature (1x3)" in panels c/e)
+#  - dim numerals    18                   (matches "(1 x 96)" tag in
+#    panel c)
+FS_F_HDR     = FS_KDE_HDR + 4   # 32
+FS_F_SUB     = 18
+FS_F_AXIS    = 16
+FS_F_DIM     = 18
+
+
+def _draw_panel_f_msg_passing(ax, args):
+    """Left block of panel (f), ROTATED 90 deg CLOCKWISE relative to
+    panel (e): Loc_a sits on the right, Loc_b on top, Loc_c on left,
+    Loc_d at the bottom. The h_a / agg_a embedding is now a VERTICAL
+    pair (h_a on top, agg_a on bottom) placed to the right of Loc_a
+    so the (1x256) embedding feeds the MLP on the right.
+
+    Only the 3 straight purple message-passing arrows (b/c/d -> Loc_a)
+    appear inside the K4 — gray K4 edges are dropped, edge-feature
+    strip omitted.
+    """
+    ax.set_xlim(0, 12)
+    ax.set_ylim(0, 16)
+    ax.set_aspect('equal', adjustable='box')
+    for sp in ('top', 'right', 'left', 'bottom'):
+        ax.spines[sp].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    # K4 nodes rotated 90 deg CW relative to panel (e).
+    graph_positions = draw_k4_graph(
+        ax, target_loc=args.target_loc,
+        positions={
+            'a': (8.6, 8.0),    # was top   -> right
+            'b': (6.0, 10.6),   # was left  -> top
+            'c': (3.4, 8.0),    # was bottom-> left
+            'd': (6.0, 5.4),    # was right -> bottom
+        },
+        node_size=72,
+        draw_edges=False,
+    )
+
+    # Vertical node-feature strips around each location.
+    # In the rotated frame each box has width = old box_h = 0.504 and
+    # height = old box_w = 0.592, with n_boxes stacked vertically.
+    strip_n  = 7
+    box_w_v  = 0.504   # vertical strip width
+    box_h_v  = 0.592   # per-box height
+    strip_total_h = strip_n * box_h_v        # 4.144
+    strip_total_w = box_w_v                  # 0.504
+
+    def _vstrip(x_left, y_bottom, color):
+        for i in range(strip_n):
+            alpha = 0.40 + 0.55 * (((i * 37 + 5) % 11) / 10.0)
+            ax.add_patch(Rectangle(
+                (x_left, y_bottom + i * box_h_v),
+                box_w_v, box_h_v,
+                facecolor=color, alpha=alpha,
+                edgecolor='#333', lw=0.8, zorder=4,
+            ))
+
+    # Strip positions: outward from each node.
+    #  - b (top):    strip ABOVE b
+    #  - c (left):   strip LEFT of c
+    #  - d (bottom): strip BELOW d
+    # All three are vertical bars 0.504 wide, 4.144 tall.
+    strip_pos = {
+        'b': (6.0 - box_w_v / 2,                10.6 + 1.05),
+        'c': (3.4 - 1.05 - box_w_v,             8.0 - strip_total_h / 2),
+        'd': (6.0 - box_w_v / 2,                5.4 - 1.05 - strip_total_h),
+    }
+    for l in ('b', 'c', 'd'):
+        x_l, y_b = strip_pos[l]
+        _vstrip(x_l, y_b, C_NODE_FEAT)
+
+    # h_a strip (Loc_a node feature) — vertical, right of Loc_a.
+    ha_x0 = 8.6 + 1.05
+    ha_y0 = 8.0 + 0.30                 # upper half of stack
+    _vstrip(ha_x0, ha_y0, C_NODE_FEAT)
+    ha_top = ha_y0 + strip_total_h
+
+    # "concat" text between h_a and agg_a (was ⊕ symbol). fontsize
+    # matches the "concat" label in panel c.
+    concat_y = ha_y0 - 0.30
+    ax.text(ha_x0 + strip_total_w / 2, concat_y, 'concat',
+            ha='center', va='center',
+            fontsize=18, fontweight='bold', color='#555', zorder=6,
+            bbox=dict(boxstyle='round,pad=0.20', facecolor='white',
+                      edgecolor='#555', lw=0.8, alpha=0.95))
+
+    # agg_a strip — vertical, below h_a.
+    agg_x0 = ha_x0
+    agg_y0 = concat_y - 0.30 - strip_total_h
+    _vstrip(agg_x0, agg_y0, C_AGG)
+
+    # Horizontal labels above/below their respective strips.
+    # fontsize matches the FS_F_SUB tier (consistent with panel b-e
+    # caption sizes while still fitting in the narrow rotated panel).
+    ax.text(ha_x0 + strip_total_w / 2, ha_top + 0.20,
+            r'Loc$_a$ node feature  $(1\!\times\!128)$',
+            ha='center', va='bottom',
+            fontsize=FS_F_SUB, fontweight='bold', color=C_NODE_FEAT)
+
+    ax.text(agg_x0 + strip_total_w / 2, agg_y0 - 0.20,
+            r'Aggregated node feature  $(1\!\times\!128)$',
+            ha='center', va='top',
+            fontsize=FS_F_SUB, fontweight='bold', color=C_AGG)
+
+    # 3 straight purple message-passing arrows from b/c/d into Loc_a.
+    # Arrow line WIDTH encodes alpha_{a,j} (edge-softmax weight).
+    alpha_values = {'b': 0.55, 'c': 0.30, 'd': 0.15}
+    alpha_positions = {
+        'b': (7.55, 9.60),   # near midpoint of b->a (top-right)
+        'c': (6.00, 8.45),   # above c->a horizontal line
+        'd': (7.55, 6.40),   # near midpoint of d->a (bottom-right)
+    }
+
+    for l in ('b', 'c', 'd'):
+        sx, sy = graph_positions[l]
+        tx, ty = graph_positions['a']
+        lw = 1.5 + 11.5 * alpha_values[l]  # ~[3.2, 7.8] over [0.15, 0.55]
+        ax.annotate(
+            '',
+            xy=(tx, ty),
+            xytext=(sx, sy),
+            arrowprops=dict(arrowstyle='-|>', color='#3a1f6b',
+                            lw=lw, mutation_scale=24, alpha=0.95,
+                            shrinkA=22, shrinkB=22,
+                            zorder=10),
+        )
+        lx, ly = alpha_positions[l]
+        ax.text(lx, ly, fr'$\alpha_{{a{l}}}$',
+                ha='center', va='center',
+                fontsize=22, fontweight='bold', color='#3a1f6b',
+                bbox=dict(boxstyle='round,pad=0.18', facecolor='white',
+                          edgecolor='none', alpha=0.92),
+                zorder=11)
+
+    # "Message passing" title — top-left of the rotated panel.
+    # Pushed down below the (f) panel-letter label.
+    ax.text(0.2, 13.5, 'Message passing',
+            ha='left', va='center',
+            fontsize=FS_F_HDR, fontweight='bold', color='#222')
+    ax.text(0.2, 12.6, 'edge-attention GAT (1 round)',
+            ha='left', va='center',
+            fontsize=FS_F_SUB, color='#444', style='italic')
+    ax.text(0.2, 11.8, r'arrow thickness $\propto \alpha_{ij}$',
+            ha='left', va='center',
+            fontsize=FS_F_SUB - 2, color='#666', style='italic')
+
+    # Output anchor: exit at the CONCAT level (y = Loc_a center = 8.0).
+    # The 256-d Loc_a embedding is the concat output, so the arrow to
+    # MLP exits at the concat row — physically the midpoint of MP
+    # (y_frac = 0.5), which aligns horizontally with MLP centers_y=6.0
+    # (also y_frac = 0.5 in MLP's ylim 0-12).
+    out_x = agg_x0 + strip_total_w + 0.10
+    out_y = concat_y
+    return out_x, out_y
+
+
+def _draw_panel_f_mlp(ax):
+    """Middle block of panel (f): MLP head (256 -> 128 -> 64 -> 32
+    -> out_dim). Flow is LEFT-to-RIGHT, so the 256-d block sits on
+    the left (input from message passing) and the head exits on
+    the right (out_dim -> output grid). Arrows point RIGHT."""
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 12)
+    ax.set_aspect('auto')
+    for sp in ('top', 'right', 'left', 'bottom'):
+        ax.spines[sp].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    ax.text(5.0, 11.55, 'MLP head',
+            ha='center', va='center',
+            fontsize=FS_F_HDR, fontweight='bold', color='#222')
+
+    # Drawn LEFT-to-RIGHT, shrinking from 256 (left) to 32 (right)
+    # then exiting rightward into the output heads.
+    dims    = [256, 128, 64,  32]
+    heights = [3.6, 2.7, 2.0, 1.4]
+    width = 0.95
+    depth = 0.32
+    spacing = 1.05
+    # Vertically centered in the MLP panel (ylim 0-12 -> y_frac 0.5)
+    # so the inter-axes arrow from MP (at y_frac 0.5) lands horizontally.
+    centers_y = 6.0
+    n_blocks = len(dims)
+    total_w = n_blocks * width + (n_blocks - 1) * spacing
+    x_left0 = (10.0 - total_w) / 2
+
+    left_edges, right_edges = [], []
+    for i, (d, h) in enumerate(zip(dims, heights)):
+        x_left = x_left0 + i * (width + spacing)
+        draw_conv_block(ax, x_left=x_left, y_center=centers_y,
+                        width=width, height=h, depth=depth,
+                        color=C_MLP, label=None)
+        ax.text(x_left + width / 2, centers_y, str(d),
+                ha='center', va='center',
+                fontsize=FS_F_DIM, fontweight='bold', color='#222',
+                zorder=6)
+        left_edges.append(x_left)
+        right_edges.append(x_left + width)
+
+    # Inter-block arrows POINT RIGHT (data flow: 256 -> 128 -> 64 -> 32).
+    for src, dst in [(0, 1), (1, 2), (2, 3)]:
+        x_src = right_edges[src] + depth + 0.05
+        x_dst = left_edges[dst] - 0.05
+        ax.annotate('',
+                    xy=(x_dst, centers_y),
+                    xytext=(x_src, centers_y),
+                    arrowprops=dict(arrowstyle='->', mutation_scale=18,
+                                    lw=1.6, color='#444'))
+        ax.text(0.5 * (x_src + x_dst),
+                centers_y + max(heights) / 2 + 0.25,
+                'ReLU', ha='center', va='bottom',
+                fontsize=FS_F_SUB - 2, color='#666', style='italic')
+
+    # Final exit arrow from the rightmost (32-d) block toward the
+    # output grid.
+    x_final_src = right_edges[-1] + depth + 0.05
+    x_final_end = x_final_src + 0.85
+    ax.annotate('',
+                xy=(x_final_end, centers_y),
+                xytext=(x_final_src, centers_y),
+                arrowprops=dict(arrowstyle='->', mutation_scale=18,
+                                lw=1.6, color='#444'))
+
+    ax.text(5.0, 3.55,
+            r'out_dim = 1  (point estimate, reg or cls)',
+            ha='center', va='center',
+            fontsize=FS_F_SUB - 2, color='#222')
+    ax.text(5.0, 2.95,
+            r'out_dim = 3  (CQR quantiles)',
+            ha='center', va='center',
+            fontsize=FS_F_SUB - 2, color='#222')
+    ax.text(5.0, 1.55,
+            'shared head — applied at every location node',
+            ha='center', va='center',
+            fontsize=FS_F_SUB - 2, color='#666', style='italic')
+
+    # Anchors used by the inter-axes ConnectionPatches.
+    # mlp_in (left side): left edge of 256-d block (leftmost).
+    mlp_in_x = left_edges[0] - 0.05
+    mlp_in_y = centers_y
+    # mlp_out (right side): tip of the exit arrow.
+    mlp_out_x = x_final_end
+    mlp_out_y = centers_y
+
+    return mlp_out_x, mlp_out_y, mlp_in_x, mlp_in_y
+
+
+def _draw_panel_f_outputs(ax):
+    """Leftmost block of panel (f): generalized output heads.
+    The 32-d MLP exit branches into 4 task heads — the two task
+    types (regression / classification) crossed with the two
+    inference modes (point estimate / conformal prediction).
+    Drawn as a vertical fork of 4 labeled boxes."""
+    ax.set_xlim(0, 11)
+    ax.set_ylim(0, 12)
+    ax.set_aspect('auto')
+    for sp in ('top', 'right', 'left', 'bottom'):
+        ax.spines[sp].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    ax.text(5.5, 11.45, 'Output heads',
+            ha='center', va='center',
+            fontsize=FS_F_HDR, fontweight='bold', color='#222')
+
+    # Heads — same architecture, different out_dim and loss.
+    heads = [
+        ('Regression head',  'point estimate',
+         r'$\hat{y} \in \mathbb{R}$',                                 C_BAR_REG),
+        ('Regression head',  'conformal prediction',
+         r'$[\hat{q}_{\mathrm{lo}},\;\hat{q}_{\mathrm{hi}}]$ (CQR)',  C_INT_CP),
+        ('Classification head', 'point estimate',
+         r'$\arg\!\max$  over Loc$_{a..d}$',                          C_BAR_CLS),
+        ('Classification head', 'conformal prediction',
+         r'$\hat{\mathcal{C}}\subseteq\{\mathrm{Loc}_{a..d}\}$ (RAPS)', C_INT_CP),
+    ]
+
+    # Left-side source point where MLP exit feeds in.
+    src_x, src_y = 1.3, 5.7
+
+    box_x = 2.2
+    box_w = 8.4
+    box_h = 1.6
+    box_ys = [9.1, 7.0, 4.4, 2.3]
+
+    for (task, mode, output, col), by in zip(heads, box_ys):
+        ax.add_patch(Rectangle(
+            (box_x, by - box_h / 2), box_w, box_h,
+            facecolor='white', edgecolor=col, lw=2.4,
+            zorder=3,
+        ))
+        ax.text(box_x + 0.3, by + 0.40,
+                f'{task}  ·  {mode}',
+                ha='left', va='center',
+                fontsize=FS_F_SUB, fontweight='bold', color='#222')
+        ax.text(box_x + 0.3, by - 0.32,
+                output,
+                ha='left', va='center',
+                fontsize=FS_F_SUB - 2, color=col, style='italic')
+
+        # Curved fan-out arrow from MLP exit (on the left) to box's
+        # left edge.
+        rad = (by - src_y) / 18.0
+        ax.annotate(
+            '',
+            xy=(box_x - 0.05, by),
+            xytext=(src_x, src_y),
+            arrowprops=dict(arrowstyle='->', mutation_scale=18,
+                            lw=1.8, color='#444',
+                            connectionstyle=f'arc3,rad={rad:.2f}'),
+        )
+
+    return src_x, src_y
+
+
+def _draw_panel_f(fig, subplotspec, args):
+    """Panel (f): graph (from e) -> message passing -> MLP head ->
+    4 output heads. Visual flow reads LEFT-to-RIGHT."""
+    gs_f = subplotspec.subgridspec(
+        1, 3,
+        width_ratios=[3.0, 2.5, 3.5],  # MP (now portrait) : MLP : outputs
+        wspace=0.10,
+    )
+
+    # ---- Leftmost: message passing on panel-(e) K4 ----------------
+    ax_mp = fig.add_subplot(gs_f[0, 0])
+    mp_out_x, mp_out_y = _draw_panel_f_msg_passing(ax_mp, args)
+
+    # ---- Middle: MLP head ------------------------------------------
+    ax_mlp = fig.add_subplot(gs_f[0, 1])
+    mlp_out_x, mlp_out_y, mlp_in_x, mlp_in_y = _draw_panel_f_mlp(ax_mlp)
+
+    # ---- Rightmost: 4 output-head fork -----------------------------
+    ax_out = fig.add_subplot(gs_f[0, 2])
+    out_src_x, out_src_y = _draw_panel_f_outputs(ax_out)
+
+    # Rightward inter-block arrows.
+    fig.add_artist(ConnectionPatch(
+        xyA=(mp_out_x, mp_out_y), coordsA=ax_mp.transData,
+        xyB=(mlp_in_x, mlp_in_y), coordsB=ax_mlp.transData,
+        arrowstyle='->', mutation_scale=28, lw=2.6,
+        color='#444', zorder=20,
+    ))
+    fig.add_artist(ConnectionPatch(
+        xyA=(mlp_out_x, mlp_out_y), coordsA=ax_mlp.transData,
+        xyB=(out_src_x, out_src_y), coordsB=ax_out.transData,
+        arrowstyle='->', mutation_scale=28, lw=2.6,
+        color='#444', zorder=20,
+    ))
+
+    return ax_out, ax_mlp, ax_mp
+
+
+# =====================================================================
+# SECTION H: Main entry point.
 # =====================================================================
 
 def main():
@@ -1578,17 +1953,19 @@ def main():
     # Top-row height = each top sub-panel's width = 11.11" so the
     # engine / tree / K4 slots are SQUARE. aspect='equal' inside
     # draw_engine/draw_tree then fills the entire slot.
-    fig = plt.figure(figsize=(40, 37))
+    # Third row (panel f) carries the inference pipeline.
+    fig = plt.figure(figsize=(40, 50))
     outer = fig.add_gridspec(
-        2, 1,
-        height_ratios=[11.11, 26.0],
-        hspace=0.04,
+        3, 1,
+        height_ratios=[11.11, 26.0, 18.0],
+        hspace=0.06,
     )
 
     ax_a1, ax_a2, ax_a3 = _draw_panel_a(fig, outer[0])
     ax_tree, ax_kde, ax_conv, ax_graph = _draw_panels_bcde(
         fig, outer[1], args,
     )
+    ax_out, ax_mlp, ax_mp = _draw_panel_f(fig, outer[2], args)
 
     # Panel letters.
     panel_label_kw = dict(fontsize=FS_KDE_HDR + 6, fontweight='bold',
@@ -1603,6 +1980,8 @@ def main():
                 transform=ax_kde.transAxes, **panel_label_kw)
     ax_graph.text(0.015, 0.99, '(e)',
                   transform=ax_graph.transAxes, **panel_label_kw)
+    ax_mp.text(0.015, 0.99, '(f)',
+               transform=ax_mp.transAxes, **panel_label_kw)
 
     fig.savefig(args.out_pdf, bbox_inches='tight')
     print(f'Saved: {args.out_pdf}')
