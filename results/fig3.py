@@ -1,619 +1,334 @@
 #!/usr/bin/env python3
 """
-Figure 3 — Denmark SARS-CoV-2 5-clade composite (ML + bootstrap).
+Figure 3 — Performance analysis (3-row layout).
 
-Five-row x five-column grid, one row per Nextstrain clade
-(20I, 21I, 21J, 21K, 21L):
-
-  Col 0:  Exploded ML timetree, branches colored by Danish division.
-  Col 1:  ML Source-Sink Score choropleth.
-  Col 2:  Bootstrap distribution of SSS per region (40 replicates) + ML star.
-  Col 3:  ML R_e choropleth.
-  Col 4:  Bootstrap distribution of R_e per region (40 replicates) + ML star.
-
-Tree topology comes from stephy_input/<clade>/newick/ml.nwk; division and
-numdate are joined onto each node from the parent lineage's augur outputs
-(traits.json + branch_lengths.json) by node name. Predictions come from
-stephy_output/<clade>/regression.tsv (ml row + 40 replicate rows).
+  Row 1 (a):   Top-k identification accuracy (100k dataset).
+  Row 2 (b):   R0 distribution by rank with gap violins (100k dataset).
+  Row 3 (c-f): Per-task headline metric (R2 for regression, accuracy for
+               classification) across X1/X2/X3 population scales. One line
+               per pipeline. Shows the raw performance shift under
+               population-scale change; the CP / coverage angle lives in
+               cp_coverage_collapse.py.
 
 Usage:
     python3 fig3.py
-    python3 fig3.py --base_dir /path/to/bootstrap_uncertainty --geojson /path/to/gadm41_DNK_1.json
+    python3 fig3.py --result_dir /path/to/100k_result --gen_root /path/to/5k_parent_dir
 """
 
 import os
-import sys
-import json
 import argparse
-from pathlib import Path
-from datetime import datetime, timedelta
-
 import numpy as np
 import pandas as pd
-import baltic as bt
-import geopandas as gpd
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
-from matplotlib.collections import LineCollection
-from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
-from shapely.geometry import box, MultiPolygon
+from sklearn.metrics import r2_score
 
-# ---------------------------------------------------------------------------
-# Publication defaults (mirror denmark_old)
-# ---------------------------------------------------------------------------
+# -- Shared style (consistent with fig2.py) ---------------------------------
+
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 18,
-    'axes.labelsize': 22,
-    'axes.titlesize': 24,
-    'xtick.labelsize': 18,
-    'ytick.labelsize': 18,
-    'legend.fontsize': 20,
-    'figure.dpi': 300,
+    'font.size': 11,
+    'axes.labelsize': 12,
+    'axes.titlesize': 14,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 11,
+    'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
     'ps.fonttype': 42,
 })
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-CLADES = ['20I', '21I', '21J', '21K', '21L']
-CLADE_LABELS = {
-    '20I': 'Alpha 20I',
-    '21I': 'Delta 21I',
-    '21J': 'Delta 21J',
-    '21K': 'Omicron 21K',
-    '21L': 'Omicron 21L',
-}
-CLADE_TO_LINEAGE = {
-    '20I': 'Alpha',
-    '21I': 'Delta',
-    '21J': 'Delta',
-    '21K': 'Omicron',
-    '21L': 'Omicron',
+# -- Pipelines ---------------------------------------------------------------
+
+PIPELINES = ['CBLV-CNN', 'stephy']
+PIPELINE_STYLE = {
+    'CBLV-CNN': ('#5B7E9E', 'o'),   # steel-blue circle
+    'stephy':   ('#7A6FAC', 'D'),   # purple diamond
 }
 
-DIVISION_COLORS = {
-    'Hovedstaden': '#4C90C0',
-    'Midtjylland': '#E68133',
-    'Nordjylland': '#75B681',
-    'Sjaelland':   '#D4534E',
-    'Syddanmark':  '#9B59B6',
+# -- Targets -----------------------------------------------------------------
+
+TARGETS = ['reg_r0', 'reg_rr', 'reg_sss', 'cls_as']
+TARGET_LABELS = {
+    'reg_r0':  'Reproduction Number (Reg.)',
+    'reg_rr':  'Recovery Rate (Reg.)',
+    'reg_sss': 'Source-Sink Score (Reg.)',
+    'cls_as':  'Ancestral State (Cls.)',
 }
-DEFAULT_COLOR = '#AAAAAA'
+IS_CLASSIFICATION = {
+    'reg_r0': False, 'reg_rr': False,
+    'reg_sss': False, 'cls_as': True,
+}
+PRED_COLS = {
+    'reg_r0':  ('true_reg_r0',  'pred_reg_r0'),
+    'reg_rr':  ('true_reg_rr',  'pred_reg_rr'),
+    'reg_sss': ('true_reg_sss', 'pred_reg_sss'),
+    'cls_as':  ('true_ancestor', 'pred_ancestor'),
+}
 
-SSS_CMAP = LinearSegmentedColormap.from_list(
-    'sss_diverging',
-    ['#2166AC', '#67A9CF', '#D1E5F0', '#FAFAFA',
-     '#FDDBC7', '#EF8A62', '#B2182B'],
-)
-R0_CMAP = LinearSegmentedColormap.from_list(
-    'r0_sequential',
-    ['#FFFFD4', '#FEE391', '#FEC44F', '#FE9929',
-     '#EC7014', '#CC4C02', '#8C2D04'],
-)
+# -- Layout constants --------------------------------------------------------
 
-REGION_NAME_MAP = {'Sjælland': 'Sjaelland'}
+NUM_LOCATIONS = 12
+VIOLIN_R0_COLOR = '#6baed6'
+GAP_COLOR = '#fc8d59'
 
-# Region order for the bootstrap violins: left -> right by population (matches
-# stephy_lib.DIVISION_TO_LOC and the reference violin_r0_sss.png).
-REGIONS_BY_POP = ['Hovedstaden', 'Midtjylland', 'Syddanmark',
-                  'Sjaelland', 'Nordjylland']
-SSS_YLIM = (-1.05, 1.05)
-R0_YLIM = (0.8, 3.0)
-VIOLIN_FACE = '#A9C5DE'
-ML_COLOR = '#D62728'
-
-FIG_WIDTH = 12
-FIG_RATIO = 2
-Y_GAP = 500        # vertical y-data gap between stacked trees (must fit a label)
-LABEL_OFFSET = 80  # label baseline above each tree's top tip (y-data units)
-HORIZ_LW = 0.4
-TIP_SIZE = 1
+SCALES = ['X1', 'X2', 'X3']
+SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
 
 
-# ---------------------------------------------------------------------------
-# stdout tee — diagnostic output saved next to the script
-# ---------------------------------------------------------------------------
-class _Tee:
-    """Mirror writes across multiple streams (used to tee stdout to fig3.out)."""
+# -- Helpers -----------------------------------------------------------------
 
-    def __init__(self, *streams):
-        self.streams = streams
-
-    def write(self, x):
-        for s in self.streams:
-            s.write(x)
-
-    def flush(self):
-        for s in self.streams:
-            s.flush()
+def style_violin(parts, color, alpha=0.7):
+    """Apply face color and edge style to violin plot parts."""
+    for body in parts['bodies']:
+        body.set_facecolor(color)
+        body.set_edgecolor('none')
+        body.set_alpha(alpha)
+    for key in ('cmins', 'cmaxes', 'cbars', 'cmedians'):
+        if key in parts:
+            parts[key].set_edgecolor('#333333')
+            parts[key].set_linewidth(0.8)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def division_color(node):
-    """Return the color for a node based on its division trait."""
-    return DIVISION_COLORS.get(node.traits.get('division', ''), DEFAULT_COLOR)
-
-
-def decimal_to_datetime(dec_year):
-    """Convert decimal year to datetime."""
-    year = int(dec_year)
-    remainder = dec_year - year
-    start = datetime(year, 1, 1)
-    end = datetime(year + 1, 1, 1)
-    return start + timedelta(seconds=(end - start).total_seconds() * remainder)
+def draw_iqr(ax, data_list, positions, linewidth=1.5):
+    """Overlay IQR bars on a violin plot."""
+    for i, d in enumerate(data_list):
+        q25, q75 = np.percentile(d, [25, 75])
+        ax.vlines(positions[i], q25, q75, color='#333333',
+                  linewidth=linewidth, zorder=4)
 
 
-def node_name(k):
-    """Return the best-effort name string for a baltic node (tip or internal)."""
-    name = getattr(k, 'name', None)
-    if name:
-        return name
-    return k.traits.get('label')
+def load_predictions(target, pipeline_dir):
+    """Return (true, pred) arrays from test_predictions.csv, or (None, None)."""
+    path = os.path.join(pipeline_dir, target, 'test_predictions.csv')
+    if not os.path.exists(path):
+        return None, None
+    df = pd.read_csv(path)
+    true_col, pred_col = PRED_COLS[target]
+    return df[true_col].values, df[pred_col].values
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
+def compute_score(target, true_vals, pred_vals):
+    """Return R2 (regression) or accuracy (classification), or None."""
+    if true_vals is None:
+        return None
+    mask = ~(np.isnan(true_vals.astype(float)) |
+             np.isnan(pred_vals.astype(float)))
+    t, p = true_vals[mask], pred_vals[mask]
+    if len(t) == 0:
+        return None
+    if IS_CLASSIFICATION[target]:
+        return float(np.mean(t.astype(int) == p.astype(int)))
+    return float(r2_score(t, p))
 
-def load_clade_tree(base_dir, clade):
-    """Load a clade's ML topology and decorate nodes with division + numdate.
 
-    Topology comes from the per-clade Newick under stephy_input/<clade>/newick/
-    so we get a clean clade-scoped tree (no outgroup, no sibling clades).
-    Node-level division and absolute time come from the parent lineage's
-    augur outputs (traits.json, branch_lengths.json) and are joined by node
-    name (DCGC tip IDs and NODE_xxxxx internal labels match across files).
+def load_scale_scores(gen_root):
+    """For each (target, pipeline): list of scores aligned with SCALES.
+
+    Returns: {target: {pipeline: [score_X1, score_X2, score_X3]}}.
+    Missing (scale, pipeline) entries are stored as None.
     """
-    lineage = CLADE_TO_LINEAGE[clade]
-    tree_path = base_dir / 'stephy_input' / clade / 'newick' / 'ml.nwk'
-    bl_path = base_dir / lineage / 'ml_point_estimate' / 'branch_lengths.json'
-    traits_path = base_dir / lineage / 'ml_point_estimate' / 'traits.json'
-
-    tree = bt.loadNewick(str(tree_path), absoluteTime=False)
-    tree.traverse_tree()
-    tree.sortBranches()
-
-    with open(bl_path) as f:
-        bl_nodes = json.load(f)['nodes']
-    with open(traits_path) as f:
-        traits_nodes = json.load(f)['nodes']
-
-    missing_time = 0
-    missing_div = 0
-    for k in tree.Objects:
-        name = node_name(k)
-        if name and name in bl_nodes and 'numdate' in bl_nodes[name]:
-            k.absoluteTime = float(bl_nodes[name]['numdate'])
-        else:
-            missing_time += 1
-        if name and name in traits_nodes:
-            k.traits['division'] = traits_nodes[name].get('division', '')
-        else:
-            missing_div += 1
-
-    # Root absoluteTime is needed for the chronological sort + label placement.
-    if tree.root.absoluteTime is None:
-        # Fall back to the earliest descendant tip time minus a small epsilon.
-        tip_times = [k.absoluteTime for k in tree.getExternal()
-                     if k.absoluteTime is not None]
-        if tip_times:
-            tree.root.absoluteTime = min(tip_times) - 0.01
-
-    if missing_time or missing_div:
-        print(f'  ({missing_time} nodes missing numdate, '
-              f'{missing_div} missing division)')
-    return tree
+    out = {t: {p: [None] * len(SCALES) for p in PIPELINES} for t in TARGETS}
+    for i, scale in enumerate(SCALES):
+        scale_root = os.path.join(gen_root, SCALE_DIR_TPL.format(scale=scale))
+        for pipeline in PIPELINES:
+            pdir = os.path.join(scale_root, pipeline)
+            for target in TARGETS:
+                score = compute_score(target, *load_predictions(target, pdir))
+                out[target][pipeline][i] = score
+    return out
 
 
-def compute_subtree_sizes(tree):
-    """Count descendant tips per internal node (drives vertical branch width)."""
-    sizes = {id(k): 1 for k in tree.getExternal()}
-    remaining = list(tree.getInternal())
-    while remaining:
-        still = []
-        for k in remaining:
-            if all(id(ch) in sizes for ch in k.children):
-                sizes[id(k)] = sum(sizes[id(ch)] for ch in k.children)
-            else:
-                still.append(k)
-        if len(still) == len(remaining):
-            break  # safeguard against malformed topology
-        remaining = still
-    return sizes
-
-
-def load_clade_predictions(base_dir, clade):
-    """Return ML + bootstrap distributions for SSS and R0 from regression.tsv.
-
-    Returns:
-        sss_ml, r0_ml:    {region: float}                — ML point estimates.
-        sss_boot, r0_boot:{region: 1D np.ndarray}        — per-replicate values.
-    """
-    reg_path = base_dir / 'stephy_output' / clade / 'regression.tsv'
-    df = pd.read_csv(reg_path, sep='\t')
-    ml = df[df['source'] == 'ml']
-    boot = df[df['source'].astype(str).str.startswith('replicate_')]
-
-    sss_ml = dict(zip(ml['location_name'], ml['sss_point']))
-    r0_ml = dict(zip(ml['location_name'], ml['r0_point']))
-    sss_boot = {region: g['sss_point'].to_numpy()
-                for region, g in boot.groupby('location_name')}
-    r0_boot = {region: g['r0_point'].to_numpy()
-               for region, g in boot.groupby('location_name')}
-    return sss_ml, r0_ml, sss_boot, r0_boot
-
-
-def load_regions(geojson_path):
-    """Load Denmark regions GeoJSON, clipped to mainland (Bornholm excluded)."""
-    gdf = gpd.read_file(geojson_path)
-    gdf['region'] = gdf['NAME_1'].replace(REGION_NAME_MAP)
-    clip_box = box(7.5, 54.0, 12.65, 58.0)
-    gdf = gdf.copy()
-    gdf['geometry'] = gdf.geometry.intersection(clip_box)
-
-    def filter_small(geom, min_area=0.005):
-        if isinstance(geom, MultiPolygon):
-            parts = [p for p in geom.geoms if p.area > min_area]
-            if not parts:
-                return geom
-            return MultiPolygon(parts) if len(parts) > 1 else parts[0]
-        return geom
-
-    gdf['geometry'] = gdf['geometry'].apply(filter_small)
-    return gdf
-
-
-# ---------------------------------------------------------------------------
-# Drawing
-# ---------------------------------------------------------------------------
-
-def draw_tree(ax, tree, y_offset, subtree_sizes):
-    """Draw a single phylogeny via LineCollection.
-
-    Horizontal branches: thin, colored by division.
-    Vertical (joining) branches: log-scaled width by descendant count.
-    """
-    max_size = max(subtree_sizes.values())
-    log_max = np.log2(max(max_size, 2))
-
-    def vert_lw(n):
-        return 0.4 + 3.0 * np.log2(max(n, 2)) / log_max
-
-    h_segments, h_colors = [], []
-    v_by_lw = {}
-
-    for k in tree.Objects:
-        if k.absoluteTime is None:
-            continue
-        c = division_color(k)
-        x_node = mdates.date2num(decimal_to_datetime(k.absoluteTime))
-        if (k.parent and k.parent != 'Root'
-                and getattr(k.parent, 'absoluteTime', None) is not None):
-            x_parent = mdates.date2num(
-                decimal_to_datetime(k.parent.absoluteTime))
-        else:
-            x_parent = x_node
-        y_node = k.y + y_offset
-
-        h_segments.append([(x_parent, y_node), (x_node, y_node)])
-        h_colors.append(c)
-
-        if k.branchType == 'node' and k.children:
-            ys = [ch.y + y_offset for ch in k.children]
-            lw_key = round(vert_lw(subtree_sizes.get(id(k), 2)), 2)
-            v_by_lw.setdefault(lw_key, ([], []))
-            v_by_lw[lw_key][0].append([(x_node, min(ys)), (x_node, max(ys))])
-            v_by_lw[lw_key][1].append(c)
-
-    if h_segments:
-        ax.add_collection(LineCollection(
-            h_segments, colors=h_colors, linewidths=HORIZ_LW,
-            zorder=1, capstyle='round'))
-    for lw_key, (segs, cols) in v_by_lw.items():
-        ax.add_collection(LineCollection(
-            segs, colors=cols, linewidths=lw_key,
-            zorder=2, capstyle='round'))
-
-    tips_by_color = {}
-    for k in tree.getExternal():
-        if k.absoluteTime is None:
-            continue
-        c = division_color(k)
-        tips_by_color.setdefault(c, ([], []))
-        tips_by_color[c][0].append(
-            mdates.date2num(decimal_to_datetime(k.absoluteTime)))
-        tips_by_color[c][1].append(k.y + y_offset)
-
-    for c, (xs, ys) in tips_by_color.items():
-        ax.scatter(xs, ys, s=TIP_SIZE, color=c, zorder=100, linewidths=0)
-
-
-def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
-                regions=REGIONS_BY_POP, show_xticks=False):
-    """Per-clade bootstrap violin: distribution + 95% CI + median + ML star.
-
-    Mirrors stephy_output/violin_r0_sss.png — light-blue body with a soft
-    edge, black 95% interval, black median tick, red ML star. Regions
-    ordered left -> right by population (Hovedstaden -> Nordjylland). The
-    glyph legend is drawn once per column on the topmost violin (see main()).
-    """
-    positions = np.arange(len(regions))
-    boot_data = [boot_values.get(r, np.array([])) for r in regions]
-    ml_pts = [ml_values.get(r, np.nan) for r in regions]
-
-    valid = [(i, d) for i, d in enumerate(boot_data) if len(d) > 0]
-    if valid:
-        parts = ax.violinplot(
-            [d for _, d in valid],
-            positions=[i for i, _ in valid],
-            widths=0.78, showmedians=False, showextrema=False)
-        for pc in parts['bodies']:
-            pc.set_facecolor(VIOLIN_FACE)
-            pc.set_edgecolor('#5B7E9E')
-            pc.set_linewidth(0.6)
-            pc.set_alpha(0.85)
-
-    for i, d in enumerate(boot_data):
-        if len(d) == 0:
-            continue
-        lo, hi = np.percentile(d, [2.5, 97.5])
-        med = np.median(d)
-        ax.vlines(i, lo, hi, color='#222222', linewidth=2.6, zorder=3,
-                  capstyle='round')
-        ax.hlines(med, i - 0.22, i + 0.22,
-                  color='#222222', linewidth=2.8, zorder=4,
-                  capstyle='round')
-
-    for i, v in enumerate(ml_pts):
-        if v is None or (isinstance(v, float) and np.isnan(v)):
-            continue
-        ax.scatter([i], [v], marker='*', s=240, color=ML_COLOR,
-                   edgecolors='black', linewidths=0.9, zorder=5)
-
-    ax.set_xlim(-0.6, len(regions) - 0.4)
-    ax.set_ylim(*ylim)
-    ax.set_xticks(positions)
-    if show_xticks:
-        ax.set_xticklabels(regions, rotation=45, ha='right', fontsize=11)
-    else:
-        ax.set_xticklabels([])
-    ax.set_ylabel(ylabel, fontsize=13)
-    ax.tick_params(axis='y', labelsize=11)
-    ax.grid(True, axis='y', alpha=0.3, linewidth=0.5)
-    ax.set_axisbelow(True)
-    for spine in ('top', 'right'):
-        ax.spines[spine].set_visible(False)
-
-
-def violin_legend_handles():
-    """Handles for the per-column violin legend (one legend per violin column)."""
+def make_pipeline_handles():
+    """Build legend handles for the two pipelines."""
     return [
-        mpatches.Patch(color=VIOLIN_FACE, alpha=0.85,
-                       ec='#5B7E9E', lw=0.6,
-                       label='Bootstrap distribution'),
-        Line2D([0], [0], color='#222', lw=2.8, label='95% bootstrap CI'),
-        Line2D([0], [0], marker='_', color='#222', lw=0,
-               markeredgewidth=2.8, markersize=18,
-               label='Bootstrap median'),
-        Line2D([0], [0], marker='*', color=ML_COLOR, lw=0,
-               markeredgecolor='black', markeredgewidth=0.9, markersize=14,
-               label='ML estimate'),
+        Line2D([0], [0], marker=PIPELINE_STYLE[p][1],
+               color=PIPELINE_STYLE[p][0], lw=2, label=p,
+               markerfacecolor=PIPELINE_STYLE[p][0],
+               markeredgecolor='white', markeredgewidth=0.8, markersize=8)
+        for p in PIPELINES
     ]
 
 
-def draw_choropleth(ax, gdf, values, label, norm, cmap):
-    """Draw a Denmark choropleth map for one clade (no ancestor highlight)."""
-    merged = gdf.copy()
-    merged['val'] = merged['region'].map(values)
-    merged.plot(ax=ax, column='val', cmap=cmap, norm=norm,
-                edgecolor='#333333', linewidth=0.8)
-
-    ax.set_xlim(7.9, 12.7)
-    ax.set_ylim(54.45, 57.85)
-    ax.set_aspect(1 / np.cos(np.radians(56)))
-    ax.axis('off')
-    ax.set_title(label, fontsize=16, fontweight='bold',
-                 color='#333333', pad=4)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# -- Main --------------------------------------------------------------------
 
 def main():
-    """Build fig3.pdf — 5-clade trees + ML SSS / R_e choropleths + bootstrap violins.
+    """
+    Build Figure 3 — top-k identification, R0 rank structure, and per-task
+    headline metric across population scales.
 
-    Loads each clade's ML tree (decorated with division + numdate from the
-    parent lineage's augur outputs), reads ML and bootstrap predictions from
-    stephy_output/<clade>/regression.tsv, then assembles a 5x5 panel grid
-    with one row per clade and shared colorbars under the map columns.
+    Row 1 (a): top-k accuracy across pipelines on the 100k dataset.
+    Row 2 (b): R0 distribution per rank with gap violins (stephy split —
+    true values are identical across pipelines).
+    Row 3 (c-f): R2 (regression) / accuracy (classification) vs population
+    scale (X1/X2/X3), one line per pipeline.
+
+    Output: fig3.pdf alongside this script.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--base_dir', type=str,
-        default='/Users/lukelyu/Desktop/denmark_case/nextstrain/'
-                'bootstrap_uncertainty',
-        help='Root containing <Lineage>/ml_point_estimate/, stephy_input/, '
-             'stephy_output/.')
-    parser.add_argument(
-        '--geojson', type=str,
-        default='/Users/lukelyu/Desktop/trained_model/denmark_old/figure/'
-                'gadm41_DNK_1.json',
-        help='GADM Denmark regions GeoJSON (reused from denmark_old).')
+    parser.add_argument('--result_dir', type=str,
+                        default='/Users/lukelyu/Desktop/data/simu/100k_diverse_population_result',
+                        help='100k result root containing {pipeline}/{label}/test_predictions.csv')
+    parser.add_argument('--gen_root', type=str,
+                        default='/Users/lukelyu/Desktop/data/simu',
+                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
+    result_dir = args.result_dir
+    gen_root = args.gen_root
 
-    base_dir = Path(args.base_dir)
-    out_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-    log = open(out_dir / 'fig3.out', 'w')
-    sys.stdout = _Tee(sys.__stdout__, log)
-
-    # --- Load trees ---
-    loaded = []
-    for clade in CLADES:
-        print(f'Loading {clade}...', end=' ', flush=True)
-        tree = load_clade_tree(base_dir, clade)
-        n_tips = len(tree.getExternal())
-        sizes = compute_subtree_sizes(tree)
-        print(f'{n_tips} tips')
-        loaded.append((tree, CLADE_LABELS[clade], n_tips, sizes, clade))
-
-    # Chronological: earliest clade at top
-    loaded.sort(key=lambda t: (t[0].root.absoluteTime, -t[2]), reverse=True)
-    visual_order = list(reversed(loaded))
-
-    # --- Load per-clade ML + bootstrap predictions ---
-    clade_data = {}
-    for clade in CLADES:
-        sss_ml, r0_ml, sss_boot, r0_boot = load_clade_predictions(
-            base_dir, clade)
-        clade_data[CLADE_LABELS[clade]] = {
-            'sss_ml': sss_ml, 'r0_ml': r0_ml,
-            'sss_boot': sss_boot, 'r0_boot': r0_boot,
+    # -- Load R0 predictions (100k) and reshape to (n_outbreaks, 12) --------
+    data = {}
+    for pipeline in PIPELINES:
+        path = os.path.join(result_dir, pipeline, 'reg_r0',
+                            'test_predictions.csv')
+        df = pd.read_csv(path)
+        true, pred = df['true_reg_r0'].values, df['pred_reg_r0'].values
+        n = len(true) // NUM_LOCATIONS
+        data[pipeline] = {
+            'true': true[:n * NUM_LOCATIONS].reshape(n, NUM_LOCATIONS),
+            'pred': pred[:n * NUM_LOCATIONS].reshape(n, NUM_LOCATIONS),
         }
-    sss_data = {lbl: d['sss_ml'] for lbl, d in clade_data.items()}
-    r0_data = {lbl: d['r0_ml'] for lbl, d in clade_data.items()}
 
-    gdf = load_regions(args.geojson)
-    sss_norm = TwoSlopeNorm(vcenter=0, vmin=-1, vmax=1)
-    r0_norm = plt.Normalize(vmin=0.8, vmax=3.0)
+    n_outbreaks = data['stephy']['true'].shape[0]
+    sorted_desc = np.sort(data['stephy']['true'], axis=1)[:, ::-1]
+    gap_data = [sorted_desc[:, i] - sorted_desc[:, i + 1]
+                for i in range(NUM_LOCATIONS - 1)]
 
-    # --- Figure layout: tree | SSS map | SSS violin | R0 map | R0 violin ---
-    fig_height = FIG_WIDTH * FIG_RATIO
-    map_width = fig_height / 5
-    violin_width = map_width
-    fig = plt.figure(
-        figsize=(FIG_WIDTH + 2 * (map_width + violin_width), fig_height),
-        facecolor='w')
-    gs = gridspec.GridSpec(
-        5, 5, figure=fig,
-        width_ratios=[FIG_WIDTH, map_width, violin_width,
-                      map_width, violin_width],
-        wspace=0.18, hspace=0.18)
+    # -- Compute top-k accuracies -------------------------------------------
+    ks = [1, 2, 3, 4, 5]
+    exact_accs = {p: [] for p in PIPELINES}
+    miss1_accs = {p: [] for p in PIPELINES}
+    for k in ks:
+        for p in PIPELINES:
+            tk = np.argsort(data[p]['true'], axis=1)[:, -k:]
+            pk = np.argsort(data[p]['pred'], axis=1)[:, -k:]
+            overlaps = np.array([len(set(tk[i]) & set(pk[i]))
+                                 for i in range(n_outbreaks)])
+            exact_accs[p].append((overlaps == k).mean())
+            miss1_accs[p].append((overlaps >= max(k - 1, 1)).mean())
 
-    # --- Left: stacked trees ---
-    ax_tree = fig.add_subplot(gs[:, 0])
-    cumulative_y = 0
-    # Omicron clades emerge late in time → root_x sits near the right edge of
-    # the tree column. Left-shift their labels so the text doesn't extend past
-    # the column into the SSS panels.
-    LABEL_X_SHIFT_DAYS = {'21K': 90, '21L': 90}
-    for tree, label, n_tips, sizes, clade in loaded:
-        draw_tree(ax_tree, tree, cumulative_y, sizes)
-        root_x = decimal_to_datetime(tree.root.absoluteTime)
-        label_x = root_x - timedelta(days=LABEL_X_SHIFT_DAYS.get(clade, 0))
-        ax_tree.text(
-            label_x, cumulative_y + tree.ySpan + LABEL_OFFSET,
-            f'{label} (n={n_tips:,})',
-            ha='left', va='bottom', fontsize=18, fontweight='bold',
-            color='#333333')
-        cumulative_y += tree.ySpan + Y_GAP
+    # -- Load per-scale R2 / accuracy ---------------------------------------
+    scale_scores = load_scale_scores(gen_root)
 
-    ax_tree.autoscale_view()
-    for spine in ('top', 'right', 'left'):
-        ax_tree.spines[spine].set_visible(False)
-    ax_tree.spines['bottom'].set_linewidth(0.8)
-    ax_tree.tick_params(axis='x', direction='out', length=5)
-    ax_tree.tick_params(axis='y', size=0)
-    ax_tree.set_yticklabels([])
-    ax_tree.grid(axis='x', ls='--', alpha=0.3, linewidth=0.3)
-    ax_tree.set_ylim(-2, cumulative_y)
-    ax_tree.xaxis.set_major_locator(
-        mdates.MonthLocator(bymonth=[1, 3, 5, 7, 9, 11]))
-    ax_tree.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-    plt.setp(ax_tree.get_xticklabels(), rotation=45, ha='right')
+    # -- Figure layout -------------------------------------------------------
+    fig = plt.figure(figsize=(16, 15))
+    gs = gridspec.GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1],
+                           hspace=0.35, wspace=0.35)
+    pipeline_handles = make_pipeline_handles()
 
-    handles = [Line2D([0], [0], marker='o', color='w', markerfacecolor=c,
-                      markersize=14, label=div)
-               for div, c in DIVISION_COLORS.items()]
-    ax_tree.legend(handles=handles, loc='lower left', frameon=False, ncol=1)
-    ax_tree.text(-0.02, 1.0, 'a', transform=ax_tree.transAxes,
-                 fontsize=36, fontweight='bold', va='top', ha='right')
-
-    # --- SSS / R0 choropleth columns (1, 3) — panel letters span map+violin ---
-    map_configs = [
-        (1, sss_data, sss_norm, SSS_CMAP, 'bcdef'),
-        (3, r0_data,  r0_norm,  R0_CMAP,  'ghijk'),
+    # -- Row 1 (a): top-k accuracy ------------------------------------------
+    ax_a = fig.add_subplot(gs[0, :])
+    style_handles = [
+        Line2D([0], [0], color='#555555', lw=2, linestyle='-',
+               label='Allow 1 miss'),
+        Line2D([0], [0], color='#555555', lw=2, linestyle='--', alpha=0.4,
+               label='Exact match'),
     ]
-    last_ax = {}
-    for col, data, norm, cmap, panel_letters in map_configs:
-        for i, (_, label, _, _, _) in enumerate(visual_order):
-            ax = fig.add_subplot(gs[i, col])
-            values = data.get(label)
-            if not values:
-                ax.axis('off')
-                ax.set_title(label, fontsize=16, fontweight='bold',
-                             color='#333333')
+
+    x = np.array(ks)
+    for pipeline in PIPELINES:
+        color, marker = PIPELINE_STYLE[pipeline]
+        ax_a.plot(x, exact_accs[pipeline], marker=marker, markersize=8,
+                  color=color, linestyle='--', lw=2, alpha=0.4, zorder=3,
+                  markeredgecolor='white', markeredgewidth=0.8)
+        ax_a.plot(x, miss1_accs[pipeline], marker=marker, markersize=8,
+                  color=color, linestyle='-', lw=2, zorder=4,
+                  markeredgecolor='white', markeredgewidth=0.8)
+        for xi, val in zip(x, miss1_accs[pipeline]):
+            ax_a.annotate(f'{val:.0%}', (xi, val), textcoords='offset points',
+                          xytext=(0, 10), ha='center', fontsize=8, color=color)
+
+    ax_a.set_xlabel('Top-k')
+    ax_a.set_ylabel('Accuracy')
+    ax_a.set_xticks(ks)
+    ax_a.set_xticklabels([f'Top-{k}' for k in ks])
+    ax_a.set_ylim(-0.02, 1.08)
+    ax_a.grid(True, alpha=0.3)
+    ax_a.set_axisbelow(True)
+    ax_a.legend(handles=pipeline_handles + style_handles,
+                loc='upper right', ncol=4, fontsize=11)
+    ax_a.text(-0.04, 1.02, 'a', transform=ax_a.transAxes,
+              fontsize=18, fontweight='bold', va='bottom', ha='left')
+
+    # -- Row 2 (b): R0 violins + gap violins --------------------------------
+    ax_b = fig.add_subplot(gs[1, :])
+    ranks = np.arange(1, NUM_LOCATIONS + 1)
+    violin_data = [sorted_desc[:, i] for i in range(NUM_LOCATIONS)]
+
+    vp = ax_b.violinplot(violin_data, positions=ranks,
+                         showmedians=True, showextrema=False, widths=0.55)
+    style_violin(vp, VIOLIN_R0_COLOR)
+    draw_iqr(ax_b, violin_data, ranks)
+
+    gap_x = [i + 1.5 for i in range(NUM_LOCATIONS - 1)]
+    vp2 = ax_b.violinplot(gap_data, positions=gap_x,
+                          showmedians=True, showextrema=False, widths=0.35)
+    style_violin(vp2, GAP_COLOR, alpha=0.6)
+    draw_iqr(ax_b, gap_data, gap_x, linewidth=1.2)
+
+    for i, d in enumerate(gap_data):
+        ax_b.text(gap_x[i], 1.05, f'{np.median(d):.2f}', ha='center',
+                  va='bottom', fontsize=8, color=GAP_COLOR, fontweight='bold')
+
+    ax_b.axhline(1.7, color='#cccccc', linewidth=0.6, linestyle=':', zorder=1)
+    ax_b.legend(handles=[
+        mpatches.Patch(color=VIOLIN_R0_COLOR, alpha=0.7, label='R0 per rank'),
+        mpatches.Patch(color=GAP_COLOR, alpha=0.6,
+                       label='ΔR0 between consecutive ranks'),
+    ], loc='upper right')
+    ax_b.set_xlabel('Location rank (by true R0)')
+    ax_b.set_ylabel('R0  /  ΔR0')
+    ax_b.set_xticks(ranks)
+    ax_b.set_ylim(-0.5, 9)
+    ax_b.grid(True, alpha=0.3)
+    ax_b.set_axisbelow(True)
+    ax_b.text(-0.04, 1.02, 'b', transform=ax_b.transAxes,
+              fontsize=18, fontweight='bold', va='bottom', ha='left')
+
+    # -- Row 3 (c-f): per-task R2 / accuracy across population scales -------
+    scale_x = np.arange(len(SCALES))
+    for col, target in enumerate(TARGETS):
+        ax = fig.add_subplot(gs[2, col])
+        is_cls = IS_CLASSIFICATION[target]
+
+        for pipeline in PIPELINES:
+            color, marker = PIPELINE_STYLE[pipeline]
+            ys = scale_scores[target][pipeline]
+            if all(v is None for v in ys):
                 continue
-            draw_choropleth(ax, gdf, values, label, norm, cmap)
-            ax.text(-0.08, 1.05, panel_letters[i], transform=ax.transAxes,
-                    fontsize=36, fontweight='bold', va='top', ha='right')
-        last_ax[col] = ax
+            ax.plot(scale_x, ys, marker=marker, color=color, lw=2,
+                    markersize=9, markeredgecolor='white', markeredgewidth=0.8,
+                    zorder=3)
+            for xi, v in zip(scale_x, ys):
+                if v is None:
+                    continue
+                ax.annotate(f'{v:.2f}', (xi, v), textcoords='offset points',
+                            xytext=(0, 8), ha='center', fontsize=8, color=color)
 
-    # --- SSS / R0 bootstrap violin columns (2, 4) — share panel letter with
-    #     the adjacent map (map+violin = one panel) ---
-    violin_configs = [
-        (2, 'sss_ml', 'sss_boot', SSS_YLIM, 'Source-Sink Score'),
-        (4, 'r0_ml',  'r0_boot',  R0_YLIM,  r'$R_e$'),
-    ]
-    n_rows = len(visual_order)
-    for col, ml_key, boot_key, ylim, ylabel in violin_configs:
-        for i, (_, label, _, _, _) in enumerate(visual_order):
-            ax = fig.add_subplot(gs[i, col])
-            d = clade_data.get(label, {})
-            ml = d.get(ml_key, {})
-            boot = d.get(boot_key, {})
-            if not ml and not boot:
-                ax.axis('off')
-                continue
-            draw_violin(ax, ml, boot, ylim, ylabel,
-                        show_xticks=(i == n_rows - 1))
-            if i == 0:  # legend on top of each violin column
-                ax.legend(handles=violin_legend_handles(),
-                          loc='lower center',
-                          bbox_to_anchor=(0.5, 1.02),
-                          ncol=2, fontsize=10, frameon=False,
-                          handlelength=1.5, columnspacing=1.4,
-                          handletextpad=0.5)
+        ax.set_xticks(scale_x)
+        ax.set_xticklabels(SCALES)
+        ax.set_xlim(-0.3, len(SCALES) - 0.7)
+        ax.set_ylim(0.5, 1.0)
+        ax.set_box_aspect(1)
+        ax.set_xlabel('Population scale', fontsize=10)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
+        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
+        ax.text(-0.15, 1.02, chr(ord('c') + col), transform=ax.transAxes,
+                fontsize=18, fontweight='bold', va='bottom', ha='left')
 
-    # --- Colorbars aligned with the bottom of the tree column ---
-    fig.canvas.draw()
-    tree_pos = ax_tree.get_position()
-    sss_pos = last_ax[1].get_position()
-    r0_pos = last_ax[3].get_position()
-    cbar_y = tree_pos.y0 - 0.03
+    fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
+               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.04))
 
-    sm_sss = plt.cm.ScalarMappable(cmap=SSS_CMAP, norm=sss_norm)
-    cbar_ax = fig.add_axes([sss_pos.x0 + 0.02, cbar_y,
-                            sss_pos.width - 0.04, 0.008])
-    cbar = fig.colorbar(sm_sss, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label('Source-Sink Score', fontsize=14)
-    cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
-    cbar.ax.tick_params(labelsize=12)
-
-    sm_r0 = plt.cm.ScalarMappable(cmap=R0_CMAP, norm=r0_norm)
-    cbar_ax = fig.add_axes([r0_pos.x0 + 0.02, cbar_y,
-                            r0_pos.width - 0.04, 0.008])
-    cbar = fig.colorbar(sm_r0, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label(r'$R_e$', fontsize=14)
-    cbar.set_ticks([0.8, 1.5, 2.0, 2.5, 3.0])
-    cbar.ax.tick_params(labelsize=12)
-
-    out = out_dir / 'fig3.pdf'
-    fig.savefig(out, bbox_inches='tight')
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig3.pdf')
+    fig.savefig(out_path, bbox_inches='tight')
+    print(f'Saved: {out_path}')
     plt.close()
-    print(f'Saved: {out}')
 
 
 if __name__ == '__main__':
