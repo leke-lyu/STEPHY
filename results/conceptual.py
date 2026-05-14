@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
 """Merged conceptual figure — STEPHY end-to-end overview (self-contained).
 
-Panel (a) — TOP ROW
-    The "what STEPHY models" pipeline: engine -> stochastic-simulation
-    arrow -> tree -> graph-encoding arrow -> K4 GNN prediction tasks.
-    Five sub-panels in one wide row, labeled as a single composite "(a)".
+Three panels stacked vertically:
 
-Panels (b)-(e) — BOTTOM 2x2 GRID
-    (b) Full simulated tree with Loc_a's virtual subtree highlighted
-        in red and one neighbouring clade collapsed into a dashed
-        grey triangle.
-    (c) Per-node encoder. CBLV (M x 4) -> 3-branch CNN (plain / stride
-        / dilate) -> 96-d, plus Aux (1 x 5) -> AuxBranch MLP -> 32-d,
-        concat -> (1 x 128) node feature.
-    (d) Per-edge encoder. Two tip-time densities (Loc_a red, Loc_b
-        grey) time-aligned with the tree above. A DTW output inset
-        (3-cell purple strip) names the edge feature: distance / mean
-        lag / std lag.
-    (e) K4 location graph. Loc_a (red) receives the node feature
-        from (c); the Loc_a-Loc_b edge receives the edge feature
-        from (d).
+Panel (a) — DATA GENERATION
+    Stochastic 4-location SIR engine + migration K4 -> simulated 12-tip
+    outbreak tree. Two sub-panels separated by a 'stochastic simulation /
+    Gillespie algorithm' arrow block.
 
-Cross-figure data-flow arrows:
-    (c) node feature  ->  (e) Loc_a node-feature strip
-    (d) DTW output    ->  (e) Loc_a-Loc_b edge-feature strip
+Panel (b) — STEPHY ENCODER PIPELINE (2x2 GRID)
+    Top-left:  subtree extraction — full simulated tree with Loc_a's
+               virtual subtree highlighted in red, neighbouring clade
+               collapsed into a dashed grey triangle.
+    Top-right: per-node encoder — CBLV (M x 4) -> 3-branch CNN (plain /
+               stride / dilate) -> (1 x 96), plus Aux (1 x 5) ->
+               AuxBranch MLP -> (1 x 32), concat -> (1 x 128) node
+               feature.
+    Bot-left:  per-edge encoder — two tip-time densities (rho_a red,
+               rho_b grey) with a DTW output inset naming the edge
+               feature (distance / mean lag / std lag).
+    Bot-right: graph assemble — directed K4 with per-node and per-edge
+               feature strips painted onto Loc_a and the Loc_a-Loc_b
+               edge respectively.
+
+Panel (c) — INFERENCE
+    LGAT message-passing layer -> MLP head (256 -> 128 -> 64 -> 32) ->
+    per-location predictions K4 carrying (R_e, mu, SSS) cards plus the
+    predicted index case + 95% CP set.
 
 This file is fully self-contained — all drawing helpers (engine, 12-tip
-tree, 50-tip tree generation + encoder + K4) live below in clearly
-labelled SECTIONs. Saves conceptual.pdf next to this script.
+tree, 50-tip tree generation + encoder + K4 + plates) live below in
+clearly labelled SECTIONs. Saves conceptual.pdf next to this script.
 
 Usage:
     python3 conceptual.py
@@ -94,11 +97,10 @@ I_RADIUS    = 1.15
 
 # Engine font hierarchy.
 FS_NODE_I    = 26
-FS_NODE_LOC  = 22
-FS_COMP      = 16
-FS_COMP_SMP  = 13
-FS_EVENT     = 17
-FS_MIG       = 19
+FS_COMP      = 20
+FS_COMP_SMP  = 20
+FS_EVENT     = 20
+FS_MIG       = 20
 
 
 def draw_compartment(ax, pos, color, label, fontsize=FS_COMP,
@@ -128,17 +130,13 @@ def draw_arrow(ax, p1, p2, color, lw=2.2):
     ))
 
 
-def draw_engine(ax, show_compartments=True, node_prefix='I'):
-    """Draw the diamond-layout 4-location migration model onto `ax`.
+def draw_engine(ax):
+    """Draw the diamond-layout 4-location SIR engine onto `ax`.
 
-    `show_compartments=True` renders the full engine (location
-    bubbles, S/R/Sampled compartments, within-location infection /
-    removal / sampling arrows, event-type labels). `False` renders
-    only the four I-node "graph nodes" + migration K4 edges — the
-    graph view a GNN operates on.
-
-    `node_prefix` controls the I-node label: `'I'` -> `$I_a$` (full
-    SIR engine), `'Loc'` -> `$\\mathrm{Loc}_a$` (graph-only view).
+    Renders the full engine: per-location bubbles, S/I/R/Sampled
+    compartments, within-location infection / removal / sampling
+    arrows, event-type labels, and the K4 migration edges between
+    the four I-node "graph nodes".
     """
     C_S    = '#2E7DBF'
     C_I    = '#D04F4F'
@@ -146,71 +144,61 @@ def draw_engine(ax, show_compartments=True, node_prefix='I'):
     C_SAMP = '#3CB371'
     C_MIG  = '#7B4FB4'
 
-    if show_compartments:
-        for loc in 'abcd':
-            cx, cy = I_POS[loc]
-            ax.add_patch(Ellipse((cx, cy), 3.8, 6.8,
-                                 facecolor='none', edgecolor='#aaaaaa',
-                                 linewidth=1.0, linestyle=':', zorder=1))
-
-    use_I_label = (node_prefix == 'I')
-    node_fontsize = FS_NODE_I if use_I_label else FS_NODE_LOC
     for loc in 'abcd':
-        if use_I_label:
-            node_label = f'$I_{loc}$'
-        else:
-            node_label = f'$\\mathrm{{{node_prefix}}}_{loc}$'
-        draw_compartment(ax, I_POS[loc], C_I, node_label,
-                         fontsize=node_fontsize, radius=I_RADIUS,
+        cx, cy = I_POS[loc]
+        ax.add_patch(Ellipse((cx, cy), 3.8, 6.8,
+                             facecolor='none', edgecolor='#aaaaaa',
+                             linewidth=1.0, linestyle=':', zorder=1))
+
+    for loc in 'abcd':
+        draw_compartment(ax, I_POS[loc], C_I, f'$I_{loc}$',
+                         fontsize=FS_NODE_I, radius=I_RADIUS,
                          linewidth=4.5)
+        draw_compartment(ax, S_POS[loc],    C_S,    f'$S_{loc}$',
+                         fontsize=FS_COMP)
+        draw_compartment(ax, R_POS[loc],    C_R,    f'$R_{loc}$',
+                         fontsize=FS_COMP)
+        draw_compartment(ax, SAMP_POS[loc], C_SAMP,
+                         f'$\\mathrm{{Smp}}_{loc}$',
+                         fontsize=FS_COMP_SMP)
 
-        if show_compartments:
-            draw_compartment(ax, S_POS[loc],    C_S,    f'$S_{loc}$',
-                             fontsize=FS_COMP)
-            draw_compartment(ax, R_POS[loc],    C_R,    f'$R_{loc}$',
-                             fontsize=FS_COMP)
-            draw_compartment(ax, SAMP_POS[loc], C_SAMP,
-                             f'$\\mathrm{{Smp}}_{loc}$',
-                             fontsize=FS_COMP_SMP)
-
-            s_end, i_top = edge_endpoints(S_POS[loc], I_POS[loc],
-                                          r1=COMP_RADIUS, r2=I_RADIUS)
-            draw_arrow(ax, s_end, i_top, C_S, lw=2.4)
-
-            i_end_r, r_in = edge_endpoints(I_POS[loc], R_POS[loc],
-                                           r1=I_RADIUS, r2=COMP_RADIUS)
-            draw_arrow(ax, i_end_r, r_in, C_R, lw=2.0)
-
-            i_end_s, s_in = edge_endpoints(I_POS[loc], SAMP_POS[loc],
-                                           r1=I_RADIUS, r2=COMP_RADIUS)
-            draw_arrow(ax, i_end_s, s_in, C_SAMP, lw=2.0)
-
-    if show_compartments:
-        label_bbox = dict(boxstyle='round,pad=0.25', facecolor='white',
-                          edgecolor='none', alpha=0.95)
-
-        s_end, i_top = edge_endpoints(S_POS['a'], I_POS['a'],
+        s_end, i_top = edge_endpoints(S_POS[loc], I_POS[loc],
                                       r1=COMP_RADIUS, r2=I_RADIUS)
-        ax.text(s_end[0] + 0.40, 0.5 * (s_end[1] + i_top[1]),
-                'infection', ha='left', va='center',
-                fontsize=FS_EVENT, color=C_S, style='italic',
-                bbox=label_bbox, zorder=5)
+        draw_arrow(ax, s_end, i_top, C_S, lw=2.4)
 
-        i_end, r_in = edge_endpoints(I_POS['a'], R_POS['a'],
-                                     r1=I_RADIUS, r2=COMP_RADIUS)
-        ax.text(0.5 * (i_end[0] + r_in[0]) - 0.30,
-                0.5 * (i_end[1] + r_in[1]),
-                'removal', ha='right', va='center',
-                fontsize=FS_EVENT, color=C_R, style='italic',
-                bbox=label_bbox, zorder=5)
+        i_end_r, r_in = edge_endpoints(I_POS[loc], R_POS[loc],
+                                       r1=I_RADIUS, r2=COMP_RADIUS)
+        draw_arrow(ax, i_end_r, r_in, C_R, lw=2.0)
 
-        i_end, s_in = edge_endpoints(I_POS['a'], SAMP_POS['a'],
-                                     r1=I_RADIUS, r2=COMP_RADIUS)
-        ax.text(0.5 * (i_end[0] + s_in[0]) + 0.30,
-                0.5 * (i_end[1] + s_in[1]),
-                'sampling', ha='left', va='center',
-                fontsize=FS_EVENT, color=C_SAMP, style='italic',
-                bbox=label_bbox, zorder=5)
+        i_end_s, s_in = edge_endpoints(I_POS[loc], SAMP_POS[loc],
+                                       r1=I_RADIUS, r2=COMP_RADIUS)
+        draw_arrow(ax, i_end_s, s_in, C_SAMP, lw=2.0)
+
+    label_bbox = dict(boxstyle='round,pad=0.25', facecolor='white',
+                      edgecolor='none', alpha=0.95)
+
+    s_end, i_top = edge_endpoints(S_POS['a'], I_POS['a'],
+                                  r1=COMP_RADIUS, r2=I_RADIUS)
+    ax.text(s_end[0] + 0.40, 0.5 * (s_end[1] + i_top[1]),
+            'infection', ha='left', va='center',
+            fontsize=FS_EVENT, color=C_S, style='italic',
+            bbox=label_bbox, zorder=5)
+
+    i_end, r_in = edge_endpoints(I_POS['a'], R_POS['a'],
+                                 r1=I_RADIUS, r2=COMP_RADIUS)
+    ax.text(0.5 * (i_end[0] + r_in[0]) - 0.30,
+            0.5 * (i_end[1] + r_in[1]),
+            'removal', ha='right', va='center',
+            fontsize=FS_EVENT, color=C_R, style='italic',
+            bbox=label_bbox, zorder=5)
+
+    i_end, s_in = edge_endpoints(I_POS['a'], SAMP_POS['a'],
+                                 r1=I_RADIUS, r2=COMP_RADIUS)
+    ax.text(0.5 * (i_end[0] + s_in[0]) + 0.30,
+            0.5 * (i_end[1] + s_in[1]),
+            'sampling', ha='left', va='center',
+            fontsize=FS_EVENT, color=C_SAMP, style='italic',
+            bbox=label_bbox, zorder=5)
 
     # K4 migration edges (two overlapping single-headed arrows per
     # edge so both heads use the same glyph).
@@ -284,12 +272,12 @@ SEED_X_T12 = -0.3   # 12-tip tree's seed x (renamed to avoid collision
 # 12-tip-tree font hierarchy. Names suffixed `_T12` where the 50-tip
 # section (later in this file) defines a same-named constant at a
 # different size.
-FS_EVENT_TAG     = 14
-FS_MIG_TAG       = 14
-FS_T12_INDEX_CAP = 16
-FS_T12_TIME      = 16
+FS_EVENT_TAG     = 20
+FS_MIG_TAG       = 20
+FS_T12_INDEX_CAP = 20
+FS_T12_TIME      = 20
 
-LW_BRANCH    = 2.8
+LW_BRANCH    = 5.0
 MS_INF       = 18
 MS_SAMP      = 20
 MS_REM       = 19
@@ -870,6 +858,28 @@ def draw_tip_time_kde(ax_kde, root, target_loc, other_loc, seed_x,
     ax_kde.scatter(a_times, [rug_y_a] * len(a_times),
                    marker='|', color=C_HL, s=200, lw=2.6, zorder=5)
 
+    # Density-curve labels — anchored past the curves' x range so no
+    # label sits behind a curve. Grey label sits mid-low; red label
+    # near the bottom of the curve mass area. Two-line wrap.
+    peak_b_y = float(kde_b.max())
+    label_x = x_axis_max + 0.10
+    y_grey  = peak_b_y * 0.55
+    y_red   = peak_b_y * 0.10
+    ax_kde.text(label_x, y_grey,
+                r'$\rho_{' + other_loc + r'}$' +
+                ': density curve of\ntip time from '
+                + r'$\mathrm{Loc}_{' + other_loc + r'}$',
+                ha='left', va='center',
+                fontsize=20, color=OTHER_COLOR, style='italic',
+                clip_on=False, zorder=6)
+    ax_kde.text(label_x, y_red,
+                r'$\rho_{' + target_loc + r'}$' +
+                ': density curve of\ntip time from '
+                + r'$\mathrm{Loc}_{' + target_loc + r'}$',
+                ha='left', va='center',
+                fontsize=20, color=C_HL, style='italic',
+                clip_on=False, zorder=6)
+
     ax_kde.set_ylim(-0.22 * y_max, y_max)
     for sp in ('top', 'right', 'left'):
         ax_kde.spines[sp].set_visible(False)
@@ -986,8 +996,7 @@ def draw_k4_graph(ax, target_loc='a',
                   hl_color=C_HL, dim_color=C_DIM,
                   hl_edge='#7a1f1f', dim_edge='#5a5a5a',
                   label_fontsize=None, draw_edges=True,
-                  edge_attention=None,
-                  node_label_template='Loc'):
+                  edge_attention=None):
     """Diamond-layout K4 with 4 location nodes.
 
     If `edge_attention` is provided (a dict mapping ordered (src, dst)
@@ -1060,11 +1069,7 @@ def draw_k4_graph(ax, target_loc='a',
         ax.plot(x, y, 'o', markersize=node_size,
                 color=fc, markeredgecolor=ec, markeredgewidth=2.4,
                 zorder=5)
-        if node_label_template == 'Loc':
-            label = f'Loc$_{l}$'
-        else:
-            label = f'${node_label_template}_{l}$'
-        ax.text(x, y, label,
+        ax.text(x, y, f'Loc$_{l}$',
                 ha='center', va='center',
                 fontsize=label_fontsize, fontweight='bold',
                 color='white', zorder=6)
@@ -1108,34 +1113,40 @@ def draw_dtw_outputs(ax, target_loc='a', other_loc='b'):
                        n_boxes=n_cells, box_w=cell_w, box_h=cell_h,
                        color=C_EDGE_FEAT)
 
-    OTHER_COLOR = '#555'
-    _colored_inline_text(
-        ax, x=0.5, y=cell_y - 0.111,
-        parts=[
-            ('DTW(', '#222'),
-            (f'Loc$_{target_loc}$', C_HL),
-            (', ', '#222'),
-            (f'Loc$_{other_loc}$', OTHER_COLOR),
-            (r') $(1 \times 3)$', '#222'),
-        ],
-        fontsize=22, fontweight='bold',
-    )
+    # Line 1: edge_{b->a} feature (1x3) — subscript b->a in mathtext
+    # renders smaller and tucks against 'edge'.
+    ax.text(0.5, cell_y - 0.10,
+            r'$\mathrm{edge}_{' + other_loc + r'\to '
+            + target_loc + r'}\,\mathrm{feature}\,(1 \times 3)$',
+            ha='center', va='top',
+            fontsize=24, color=C_EDGE_FEAT, style='italic')
 
-    ax.text(0.5, cell_y - 0.289,
+    # Line 2: DTW(ρ_b, ρ_a) — ρ is the standard math symbol for a
+    # density function. ρ_b and ρ_a denote the per-location
+    # tip-time density curves shown in the KDE panel above.
+    ax.text(0.5, cell_y - 0.25,
+            r'$\mathrm{DTW}(\rho_{' + other_loc
+            + r'},\, \rho_{' + target_loc + r'})$',
+            ha='center', va='top',
+            fontsize=22, color=C_EDGE_FEAT)
+
+    # Line 3: distance / mean lag / std lag — describes the 3 cells.
+    ax.text(0.5, cell_y - 0.40,
             'distance / mean lag / std lag',
             ha='center', va='top',
-            fontsize=14, color='#666', style='italic')
+            fontsize=22, color=C_EDGE_FEAT, style='italic')
 
     return (start_x + total_w, cell_y + cell_h / 2)
 
 
 # =====================================================================
 # SECTION D: Engine position swap.
-# Putting Loc_b on the LEFT and Loc_d on the RIGHT makes the panel (e)
-# edge-feature strip (Loc_a-Loc_b edge) live on the LEFT side of the
-# K4 — closer to the per-edge encoder in panel (d), so the (d) -> (e)
-# arrow is short and clean. All four position dicts need the swap
-# because each is computed independently from ANGLES above.
+# Putting Loc_b on the LEFT and Loc_d on the RIGHT makes the
+# graph-assemble edge-feature strip (Loc_a-Loc_b edge) live on the LEFT
+# side of the K4 — closer to the per-edge encoder cell (bottom-left of
+# panel (b)), so the per-edge -> graph-assemble arrow is short and
+# clean. All four position dicts need the swap because each is computed
+# independently from ANGLES above.
 # =====================================================================
 for _d in (I_POS, S_POS, R_POS, SAMP_POS):
     _d['b'], _d['d'] = _d['d'], _d['b']
@@ -1147,8 +1158,7 @@ for _d in (I_POS, S_POS, R_POS, SAMP_POS):
 
 FS_ARROW_TOP    = 26
 FS_ARROW_BOT    = 22
-FS_PANEL_A_PARM = 24
-FS_PANEL_A_QUES = 26
+FS_PANEL_A_QUES = 32
 
 
 def _draw_arrow_block(ax, top_text, bottom_text):
@@ -1176,19 +1186,18 @@ def _draw_arrow_block(ax, top_text, bottom_text):
 
 
 def _draw_panel_a(fig, subplotspec):
-    """Render panel (a): engine + arrow + tree + arrow + K4-GNN."""
-    # All three main sub-panels at width_ratio 5.0 (equal width).
-    # Arrow columns at 1.5 so captions fit without overflowing into
-    # adjacent sub-panels.
+    """Render panel (a): engine + arrow + tree (1x2 main sub-panels).
+    Right-hand K4-GNN sub-panel was removed; its prediction-task
+    questions migrated to the top of panel (c)."""
     gs_a = subplotspec.subgridspec(
-        1, 5,
-        width_ratios=[5.0, 1.5, 5.0, 1.5, 5.0],
+        1, 3,
+        width_ratios=[6.0, 1.5, 6.0],
         wspace=0.04,
     )
 
     # Sub-panel a1: simulation engine (full SIR + migration view).
     ax_a1 = fig.add_subplot(gs_a[0, 0])
-    draw_engine(ax_a1, show_compartments=True)
+    draw_engine(ax_a1)
 
     # Top caption: Loc_a is the seed (centered above the diamond).
     ax_a1.text(0, 9.5, 'Loc$_a$ starts the index case',
@@ -1205,37 +1214,25 @@ def _draw_panel_a(fig, subplotspec):
     ax_a2 = fig.add_subplot(gs_a[0, 2])
     draw_tree(ax_a2)
 
-    ax_arr2 = fig.add_subplot(gs_a[0, 3])
-    _draw_arrow_block(ax_arr2,
-                      top_text='graph encoding',
-                      bottom_text='GNN training')
-
-    # Sub-panel a3: K4 network only (compartments hidden) with the
-    # per-node GNN prediction tasks captioned above it.
-    ax_a3 = fig.add_subplot(gs_a[0, 4])
-    draw_engine(ax_a3, show_compartments=False, node_prefix='Loc')
-
-    # K4 panel carries two GNN-task questions stacked at the TOP of
-    # the panel, both centered horizontally.
-    ax_a3.text(0, 9.7, 'Which location starts the index case?',
-               ha='center', va='center',
-               fontsize=FS_PANEL_A_QUES, fontweight='bold', style='italic',
-               color='#8A6500')
-    ax_a3.text(0, 8.3,
-               r'What is per-location $R_e,\ \mu,\ \mathrm{SSS}$?',
-               ha='center', va='center',
-               fontsize=FS_PANEL_A_QUES, fontweight='bold', style='italic',
-               color='#8A6500')
-
-    return ax_a1, ax_a2, ax_a3
+    return ax_a1, ax_a2
 
 
 # =====================================================================
-# SECTION F: Panels (b)-(e) composition (bottom 2x2 grid).
+# SECTION F: Panel (b) composition (2x2 grid: subtree extraction,
+# per-node encoder, per-edge encoder, graph assemble).
 # =====================================================================
 
-def _draw_panels_bcde(fig, subplotspec, args):
-    """Render the 2x2 grid for panels b, c, d, e."""
+def _draw_panel_b(fig, subplotspec, args):
+    """Render panel (b): STEPHY encoder pipeline as a 2x2 grid.
+
+    Top-left  : subtree extraction (full simulated tree with Loc_a's
+                induced subtree highlighted, one neighbor clade dashed).
+    Top-right : per-node encoder (CBLV CNN + Aux MLP -> 128-d).
+    Bottom-left: per-edge encoder (tip-time KDE + DTW inset).
+    Bottom-right: graph assemble (directed K4 with feature strips).
+    Cross-axes arrows link the encoder outputs to the graph-assemble
+    K4: node feature -> Loc_a strip, edge feature -> Loc_a-Loc_b strip.
+    """
     # ---- Tree generation -----------------------------------------
     rng = np.random.default_rng(args.seed)
     T = 8.0
@@ -1262,19 +1259,23 @@ def _draw_panels_bcde(fig, subplotspec, args):
     x_axis_max = T + 1.6
     time_x_end = T + 0.15
 
-    # ---- 2x2 layout: (b) tree | (c) encoder ; (d) density | (e) K4 -
+    # 2x2 layout for panel (b)'s 4 standardized sub-panels:
+    # top-left subtree extraction, top-right per-node encoder,
+    # bottom-left per-edge encoder, bottom-right graph assemble.
+    # Equal width and height ratios so all 4 cells have identical
+    # dimensions.
     gs_bcde = subplotspec.subgridspec(
         2, 2,
         width_ratios=[1.0, 1.0],
-        height_ratios=[6.0, 5.0],
-        hspace=0.08, wspace=0.08,
+        height_ratios=[1.0, 1.0],
+        hspace=0.10, wspace=0.08,
     )
     ax_tree  = fig.add_subplot(gs_bcde[0, 0])
     ax_kde   = fig.add_subplot(gs_bcde[1, 0], sharex=ax_tree)
     ax_conv  = fig.add_subplot(gs_bcde[0, 1])
     ax_graph = fig.add_subplot(gs_bcde[1, 1])
 
-    # ---- (b) Tree --------------------------------------------------
+    # ---- subtree extraction (top-left) -----------------------------
     draw_branches(ax_tree, root, SEED_X, lw_hl=4.6, lw_dim=2.8)
     draw_tips(ax_tree, root, ms_hl=15, ms_dim=10)
     annotate_mrca(ax_tree, mrca, args.target_loc)
@@ -1293,14 +1294,17 @@ def _draw_panels_bcde(fig, subplotspec, args):
         ax_tree.spines[sp].set_visible(False)
     ax_tree.set_xticks([])
     ax_tree.set_yticks([])
+    ax_tree.text(0.5, 0.97, 'subtree extraction',
+                 transform=ax_tree.transAxes, ha='center', va='top',
+                 fontsize=FS_KDE_HDR + 4, fontweight='bold', color='#222')
 
-    # ---- (d) Per-edge encoder: tip-time density + DTW inset -------
+    # ---- per-edge encoder (bottom-left): KDE + DTW inset -----------
     other_loc = 'b' if args.target_loc != 'b' else 'c'
     draw_tip_time_kde(
         ax_kde, root, args.target_loc, other_loc=other_loc,
         seed_x=SEED_X, x_axis_max=time_x_end, bandwidth=0.45,
     )
-    ax_kde.text(0.5, 0.97, 'Per-edge encoder',
+    ax_kde.text(0.5, 0.97, 'per-edge encoder',
                 transform=ax_kde.transAxes, ha='center', va='top',
                 fontsize=FS_KDE_HDR + 4, fontweight='bold', color='#222')
 
@@ -1321,7 +1325,7 @@ def _draw_panels_bcde(fig, subplotspec, args):
                 ha='center', va='top',
                 fontsize=FS_TIME, fontweight='bold')
 
-    # ---- (c) Per-node encoder --------------------------------------
+    # ---- per-node encoder (top-right) ------------------------------
     ax_conv.set_xlim(0, 12)
     ax_conv.set_ylim(0, 10)
     for sp in ('top', 'right', 'left', 'bottom'):
@@ -1329,8 +1333,8 @@ def _draw_panels_bcde(fig, subplotspec, args):
     ax_conv.set_xticks([])
     ax_conv.set_yticks([])
 
-    ax_conv.text(6.0, 9.65, 'Per-node encoder',
-                 ha='center', va='center',
+    ax_conv.text(0.5, 0.97, 'per-node encoder',
+                 transform=ax_conv.transAxes, ha='center', va='top',
                  fontsize=FS_KDE_HDR + 4, fontweight='bold', color='#222')
 
     CELL = 0.42
@@ -1378,12 +1382,12 @@ def _draw_panels_bcde(fig, subplotspec, args):
                  r'CBLV $(M \times 4)$',
                  ha='center', va='top',
                  fontsize=22, fontweight='bold', color='#222')
-    ax_conv.text(cblv_x0 + cblv_w / 2, cblv_y0 - 0.88,
+    ax_conv.text(cblv_x0 + cblv_w / 2, cblv_y0 - 0.65,
                  r'$M$ = fixed unified dimension;'
                  ' \n'
                  r'$N$ = subtree tips',
                  ha='center', va='top',
-                 fontsize=16, color='#666', style='italic')
+                 fontsize=22, color='#666', style='italic')
 
     # 3-branch conv encoder
     branches = [
@@ -1424,7 +1428,7 @@ def _draw_panels_bcde(fig, subplotspec, args):
     ax_conv.text(aux_x0 + aux_n * aux_bw / 2, aux_y0 - 0.78,
                  'mrca depth / earliest tip / latest tip / avg BL / n_tips',
                  ha='center', va='top',
-                 fontsize=14, color='#666', style='italic')
+                 fontsize=20, color='#666', style='italic')
 
     # AuxBranch MLP
     aux_box_x = br_x0
@@ -1488,12 +1492,12 @@ def _draw_panels_bcde(fig, subplotspec, args):
                  ha='center', va='bottom',
                  fontsize=18, fontweight='bold', color='#555')
     ax_conv.text(nf_x0 + nf_n * nf_bw / 2, nf_y0 - 0.35,
-                 f'Loc$_{args.target_loc}$ node feature '
-                 r'$(1 \times 128)$',
+                 r'$\mathrm{node}_{' + args.target_loc
+                 + r'}\,\mathrm{feature}\,(1 \times 128)$',
                  ha='center', va='top',
-                 fontsize=22, fontweight='bold', color=C_NODE_FEAT)
+                 fontsize=24, fontweight='bold', color=C_NODE_FEAT)
 
-    # ---- (e) K4 graph ---------------------------------------------
+    # ---- graph assemble (bottom-right): directed K4 ----------------
     # xlim extended so the wide Aux-matched node-feature strips fit
     # alongside the K4 diamond without overflowing.
     ax_graph.set_xlim(-2, 14)
@@ -1503,6 +1507,17 @@ def _draw_panels_bcde(fig, subplotspec, args):
         ax_graph.spines[sp].set_visible(False)
     ax_graph.set_xticks([])
     ax_graph.set_yticks([])
+    # Title positioned in figure-fraction so it aligns vertically
+    # with the 'per-edge encoder' title — ax_graph is shorter than
+    # its cell (aspect='equal'), so its axes-frac 0.97 would otherwise
+    # sit lower than ax_kde's at the same fraction.
+    _kde_pos   = ax_kde.get_position()
+    _graph_pos = ax_graph.get_position()
+    _title_y   = _kde_pos.y0 + 0.97 * _kde_pos.height
+    _title_x   = _graph_pos.x0 + 0.5 * _graph_pos.width
+    fig.text(_title_x, _title_y, 'graph assemble',
+             ha='center', va='top',
+             fontsize=FS_KDE_HDR + 4, fontweight='bold', color='#222')
 
     # Asymmetric (directed) K4: 12 directional arrows with varying
     # widths convey that the GAT learns asymmetric edge attention
@@ -1548,15 +1563,6 @@ def _draw_panels_bcde(fig, subplotspec, args):
             color=C_NODE_FEAT,
         )
 
-    a_sx = graph_positions['a'][0] + strip_offsets['a'][0]
-    a_sy = graph_positions['a'][1] + strip_offsets['a'][1]
-    ax_graph.text(a_sx + strip_n * strip_bw / 2,
-                  a_sy + strip_bh + 0.16,
-                  f'Loc$_{args.target_loc}$ node feature '
-                  r'$(1 \times 128)$',
-                  ha='center', va='bottom',
-                  fontsize=22, fontweight='bold', color=C_NODE_FEAT)
-
     # Edge-feature strip on the Loc_a-Loc_b edge (Loc_b on LEFT after
     # the b/d swap, so the strip is on the LEFT side of the diamond).
     ax_pos = graph_positions[args.target_loc]
@@ -1571,14 +1577,9 @@ def _draw_panels_bcde(fig, subplotspec, args):
         n_boxes=edge_n, box_w=edge_bw, box_h=edge_bh,
         color=C_EDGE_FEAT,
     )
-    ax_graph.text(edge_x0 + edge_n * edge_bw / 2,
-                  edge_y0 + edge_bh + 0.16,
-                  r'edge feature $(1 \times 3)$',
-                  ha='center', va='bottom',
-                  fontsize=22, fontweight='bold', color=C_EDGE_FEAT)
 
-    # ---- Cross-figure data-flow arrows within the bottom grid -----
-    # (c) per-node encoder node feature  ->  (e) Loc_a node-feature strip.
+    # ---- Cross-cell data-flow arrows within panel (b) --------------
+    # per-node encoder feature  ->  graph-assemble Loc_a strip.
     a_strip_x = graph_positions['a'][0] + strip_offsets['a'][0] \
                 + strip_n * strip_bw / 2
     a_strip_y = graph_positions['a'][1] + strip_offsets['a'][1] \
@@ -1594,7 +1595,7 @@ def _draw_panels_bcde(fig, subplotspec, args):
     )
     fig.add_artist(con_c_e)
 
-    # (d) per-edge encoder DTW inset  ->  (e) Loc_a-Loc_b edge-feature.
+    # per-edge encoder DTW inset  ->  graph-assemble Loc_a-Loc_b edge.
     con_d_e = ConnectionPatch(
         xyA=(dtw_right_x, dtw_mid_y),
         coordsA=ax_dtw.transData,
@@ -1611,27 +1612,36 @@ def _draw_panels_bcde(fig, subplotspec, args):
 
 
 # =====================================================================
-# SECTION G: Panel (f) composition.
-# Reuses the panel-(e) K4 layout, but each Loc node now carries the
-# model's PREDICTIONS (R_e, mu, SSS) plus the predicted index-case
-# location with its CP set. This bookends panel (a)'s questions
-# ("Which location is the index case? What is per-location R_e, mu,
-# SSS?") with concrete answers in the same visual vocabulary as b-e.
+# SECTION G: Panel (c) composition.
+# Inference pipeline: message-passing layer -> MLP head -> per-location
+# predictions K4. The predictions K4 reuses panel (b)'s graph-assemble
+# layout, but each Loc node now carries (R_e, mu, SSS) cards plus the
+# predicted index-case location with its 95% CP set. Internal names
+# (PANEL_F_*, _draw_panel_f_*) keep the legacy "f" prefix to avoid
+# churn — the rendered output is the figure's panel (c).
 # =====================================================================
 
 # Mock predictions for each location. Designed so Loc_a (the seed)
 # has the highest R_e and a positive Source-Sink Score (it exports),
 # and the others have moderate R_e with negative SSS (they import).
 PANEL_F_PREDS = {
-    'a': dict(R_e=2.31, mu=0.045, SSS=+0.42, R_e_lo=1.95, R_e_hi=2.68),
-    'b': dict(R_e=1.84, mu=0.062, SSS=-0.18, R_e_lo=1.51, R_e_hi=2.19),
-    'c': dict(R_e=1.97, mu=0.058, SSS=-0.11, R_e_lo=1.62, R_e_hi=2.34),
-    'd': dict(R_e=1.62, mu=0.073, SSS=-0.13, R_e_lo=1.30, R_e_hi=1.98),
+    'a': dict(R_e=2.31, R_e_lo=1.95, R_e_hi=2.68,
+              mu=0.045, mu_lo=0.035, mu_hi=0.058,
+              SSS=+0.42, SSS_lo=+0.28, SSS_hi=+0.55),
+    'b': dict(R_e=1.84, R_e_lo=1.51, R_e_hi=2.19,
+              mu=0.062, mu_lo=0.048, mu_hi=0.078,
+              SSS=-0.18, SSS_lo=-0.32, SSS_hi=-0.05),
+    'c': dict(R_e=1.97, R_e_lo=1.62, R_e_hi=2.34,
+              mu=0.058, mu_lo=0.045, mu_hi=0.073,
+              SSS=-0.11, SSS_lo=-0.24, SSS_hi=+0.02),
+    'd': dict(R_e=1.62, R_e_lo=1.30, R_e_hi=1.98,
+              mu=0.073, mu_lo=0.058, mu_hi=0.089,
+              SSS=-0.13, SSS_lo=-0.27, SSS_hi=+0.01),
 }
 
 # Predicted index case (classification answer) and its CP set at 95%.
 PANEL_F_PRED_INDEX  = 'a'
-PANEL_F_PRED_CP_SET = ['a']  # singleton — model is highly confident
+PANEL_F_PRED_CP_SET = ['a', 'b']
 
 C_PRED_VAL  = '#1f3550'   # ink-blue for prediction values
 C_PRED_INT  = '#7E57C2'   # purple for CP intervals
@@ -1651,66 +1661,70 @@ FS_F_HDR      = FS_KDE_HDR + 4   # 32 — column titles
 
 
 def _draw_pred_card(ax, x_center, y_center, loc, is_target):
-    """Draw a small bordered card carrying R_e, mu, SSS predictions
-    for one Loc node. Target node (predicted index case) gets a
-    gold border to visually pair it with the index-case star."""
+    """Draw a bordered card carrying R_e, mu, SSS predictions for one
+    Loc node. Each row shows the point estimate plus its 95% CP
+    interval. Target node (predicted index case) gets a gold border."""
     p = PANEL_F_PREDS[loc]
-    card_w, card_h = 3.20, 2.20
+    card_w, card_h = 4.40, 1.95
     edge_col = C_INDEX_GLD if is_target else '#7a7a7a'
-    edge_lw  = 2.4         if is_target else 1.6
+    edge_lw  = 2.0         if is_target else 1.4
     ax.add_patch(Rectangle(
         (x_center - card_w / 2, y_center - card_h / 2),
         card_w, card_h,
         facecolor='white', edgecolor=edge_col, lw=edge_lw,
         zorder=4,
     ))
-    # 4 stacked rows inside the card: R_e value, [CP lo, hi], mu, SSS.
-    ax.text(x_center, y_center + 0.72,
-            fr'$R_e = {p["R_e"]:.2f}$',
-            ha='center', va='center',
-            fontsize=20, fontweight='bold', color=C_PRED_VAL, zorder=6)
-    ax.text(x_center, y_center + 0.27,
-            fr'$[{p["R_e_lo"]:.2f},\;{p["R_e_hi"]:.2f}]$',
-            ha='center', va='center',
-            fontsize=14, color=C_PRED_INT, style='italic', zorder=6)
-    ax.text(x_center, y_center - 0.20,
-            fr'$\mu = {p["mu"]:.3f}$',
-            ha='center', va='center',
-            fontsize=18, color=C_PRED_VAL, zorder=6)
-    sss_color = '#b03030' if p['SSS'] > 0 else '#3060b0'
+    # 3 rows: each row carries value (left, dark-blue) and CP
+    # interval (right, purple). Unified colors — no red/blue sign
+    # distinction for SSS. Minimum font size matches the 'mrca
+    # depth / earliest tip / ...' caption in panel (b).
+    row_ys = [y_center + 0.60, y_center, y_center - 0.60]
+    val_gap = 0.08   # gap (in data units) between value and interval
     sign = '+' if p['SSS'] > 0 else '−'
-    ax.text(x_center, y_center - 0.72,
-            fr'$\mathrm{{SSS}} = {sign}{abs(p["SSS"]):.2f}$',
-            ha='center', va='center',
-            fontsize=18, fontweight='bold', color=sss_color, zorder=6)
+    rows = [
+        (row_ys[0], fr'$R_e\!=\!{p["R_e"]:.2f}$',
+         fr'$[{p["R_e_lo"]:.2f},\,{p["R_e_hi"]:.2f}]$'),
+        (row_ys[1], fr'$\mu\!=\!{p["mu"]:.3f}$',
+         fr'$[{p["mu_lo"]:.3f},\,{p["mu_hi"]:.3f}]$'),
+        (row_ys[2], fr'$\mathrm{{SSS}}\!=\!{sign}{abs(p["SSS"]):.2f}$',
+         fr'$[{p["SSS_lo"]:+.2f},\,{p["SSS_hi"]:+.2f}]$'),
+    ]
+    for y, val_str, ci_str in rows:
+        ax.text(x_center - val_gap, y, val_str,
+                ha='right', va='center',
+                fontsize=22, fontweight='bold',
+                color=C_PRED_VAL, zorder=6)
+        ax.text(x_center + val_gap, y, ci_str,
+                ha='left', va='center',
+                fontsize=20, style='italic',
+                color=C_PRED_INT, zorder=6)
 
 
 def _draw_3d_plate(ax, x_left, y_bottom, thick, height, depth_x, depth_y,
                    side='right'):
-    """3D cuboid 'plate' (thin slab) onto which a K4 is painted.
-    The thin (1xH) front face is what the viewer sees head-on; the
-    large (HxH) 'K4 face' recedes into the picture along the depth
-    axis. Returns (origin, u_vec, v_vec) — the affine basis on the
-    K4 face so a UV point (u, v) in [0, 1]^2 maps to
-    origin + u*u_vec + v*v_vec."""
+    """3D cuboid 'plate' (thin slab) onto which a K4 is painted. The
+    thin front face is what the viewer sees head-on; the larger K4
+    face recedes into the picture along the depth axis. Returns
+    (origin, u_vec, v_vec) — the affine basis on the K4 face so a UV
+    point (u, v) in [0, 1]^2 maps to origin + u*u_vec + v*v_vec."""
     if side == 'right':
         front_pts = [
-            (x_left,                         y_bottom),
-            (x_left + thick,                 y_bottom),
-            (x_left + thick,                 y_bottom + height),
-            (x_left,                         y_bottom + height),
+            (x_left,                   y_bottom),
+            (x_left + thick,           y_bottom),
+            (x_left + thick,           y_bottom + height),
+            (x_left,                   y_bottom + height),
         ]
         face_pts = [
-            (x_left + thick,                 y_bottom),
-            (x_left + thick + depth_x,       y_bottom + depth_y),
-            (x_left + thick + depth_x,       y_bottom + depth_y + height),
-            (x_left + thick,                 y_bottom + height),
+            (x_left + thick,           y_bottom),
+            (x_left + thick + depth_x, y_bottom + depth_y),
+            (x_left + thick + depth_x, y_bottom + depth_y + height),
+            (x_left + thick,           y_bottom + height),
         ]
         top_pts = [
-            (x_left,                         y_bottom + height),
-            (x_left + thick,                 y_bottom + height),
-            (x_left + thick + depth_x,       y_bottom + height + depth_y),
-            (x_left + depth_x,               y_bottom + height + depth_y),
+            (x_left,                   y_bottom + height),
+            (x_left + thick,           y_bottom + height),
+            (x_left + thick + depth_x, y_bottom + height + depth_y),
+            (x_left + depth_x,         y_bottom + height + depth_y),
         ]
         origin = (x_left + thick, y_bottom)
         u_vec  = (depth_x, depth_y)
@@ -1718,22 +1732,22 @@ def _draw_3d_plate(ax, x_left, y_bottom, thick, height, depth_x, depth_y,
     else:
         front_x = x_left + depth_x
         front_pts = [
-            (front_x,                         y_bottom),
-            (front_x + thick,                 y_bottom),
-            (front_x + thick,                 y_bottom + height),
-            (front_x,                         y_bottom + height),
+            (front_x,                   y_bottom),
+            (front_x + thick,           y_bottom),
+            (front_x + thick,           y_bottom + height),
+            (front_x,                   y_bottom + height),
         ]
         face_pts = [
-            (front_x,                         y_bottom),
-            (front_x - depth_x,               y_bottom + depth_y),
-            (front_x - depth_x,               y_bottom + depth_y + height),
-            (front_x,                         y_bottom + height),
+            (front_x,                   y_bottom),
+            (front_x - depth_x,         y_bottom + depth_y),
+            (front_x - depth_x,         y_bottom + depth_y + height),
+            (front_x,                   y_bottom + height),
         ]
         top_pts = [
-            (front_x - depth_x,               y_bottom + height + depth_y),
-            (front_x,                         y_bottom + height),
-            (front_x + thick,                 y_bottom + height),
-            (front_x + thick - depth_x,       y_bottom + height + depth_y),
+            (front_x - depth_x,         y_bottom + height + depth_y),
+            (front_x,                   y_bottom + height),
+            (front_x + thick,           y_bottom + height),
+            (front_x + thick - depth_x, y_bottom + height + depth_y),
         ]
         origin = (front_x, y_bottom)
         u_vec  = (-depth_x, depth_y)
@@ -1741,40 +1755,14 @@ def _draw_3d_plate(ax, x_left, y_bottom, thick, height, depth_x, depth_y,
 
     ax.add_patch(Polygon(top_pts, closed=True,
                          facecolor=C_PLANE_FRONT, edgecolor=C_PLANE_EDGE,
-                         lw=1.0, alpha=1.0, zorder=0))
+                         lw=1.0, zorder=0))
     ax.add_patch(Polygon(face_pts, closed=True,
                          facecolor=C_PLANE_TOP, edgecolor=C_PLANE_EDGE,
-                         lw=1.2, alpha=1.0, zorder=1))
+                         lw=1.2, zorder=1))
     ax.add_patch(Polygon(front_pts, closed=True,
                          facecolor=C_PLANE_SIDE, edgecolor=C_PLANE_EDGE,
-                         lw=1.0, alpha=1.0, zorder=2))
+                         lw=1.0, zorder=2))
     return origin, u_vec, v_vec
-
-
-def _draw_sphere_node(ax, cx, cy, rx, ry,
-                      face_color, edge_color,
-                      label, label_color='white',
-                      label_fontsize=14, zorder_base=5):
-    """3D-shaded ellipsoidal node: drop shadow + body + dark crescent
-    + upper-left highlight + centered label."""
-    ax.add_patch(Ellipse((cx + rx * 0.10, cy - ry * 0.16),
-                         width=2 * rx * 1.05, height=2 * ry * 1.05,
-                         facecolor='#000', edgecolor='none',
-                         alpha=0.10, zorder=zorder_base - 1))
-    ax.add_patch(Ellipse((cx, cy), width=2 * rx, height=2 * ry,
-                         facecolor=face_color, edgecolor=edge_color,
-                         lw=1.4, zorder=zorder_base))
-    ax.add_patch(Ellipse((cx + rx * 0.08, cy - ry * 0.10),
-                         width=2 * rx * 0.94, height=2 * ry * 0.94,
-                         facecolor='#000', edgecolor='none',
-                         alpha=0.10, zorder=zorder_base + 1))
-    ax.add_patch(Ellipse((cx - rx * 0.32, cy + ry * 0.30),
-                         width=2 * rx * 0.45, height=2 * ry * 0.45,
-                         facecolor='white', edgecolor='none',
-                         alpha=0.40, zorder=zorder_base + 2))
-    ax.text(cx, cy, label, ha='center', va='center',
-            fontsize=label_fontsize, fontweight='bold',
-            color=label_color, zorder=zorder_base + 3)
 
 
 def _draw_k4_on_face(ax, origin, u_vec, v_vec,
@@ -1783,9 +1771,10 @@ def _draw_k4_on_face(ax, origin, u_vec, v_vec,
                      k4_uv_radius=0.30, node_uv_radius=0.10,
                      label_fontsize=14):
     """Diamond K4 painted on a 3D face's UV coords (origin, u_vec,
-    v_vec from `_draw_3d_plate`). If `edge_attention` is given the K4
-    is rendered as 12 directed arrows whose line widths encode the
-    per-direction weights."""
+    v_vec from `_draw_3d_plate`). Nodes are flat tilted ellipses
+    (perspective-matched to the face) with no sphere shading. If
+    `edge_attention` is given, the K4 is rendered as 12 directed
+    arrows whose line widths encode per-direction weights."""
     def _uv_to_xy(u, v):
         return (origin[0] + u * u_vec[0] + v * v_vec[0],
                 origin[1] + u * u_vec[1] + v * v_vec[1])
@@ -1833,11 +1822,14 @@ def _draw_k4_on_face(ax, origin, u_vec, v_vec,
         x, y = pos[l]
         fc = C_HL if l == self_loc else C_DIM
         ec = '#7a1f1f' if l == self_loc else '#5a5a5a'
-        text = f'${label_template}_{l}$'
-        _draw_sphere_node(ax, x, y, node_rx, node_ry,
-                          face_color=fc, edge_color=ec,
-                          label=text, label_color='white',
-                          label_fontsize=label_fontsize, zorder_base=5)
+        ax.add_patch(Ellipse((x, y),
+                             width=2 * node_rx, height=2 * node_ry,
+                             facecolor=fc, edgecolor=ec,
+                             lw=1.6, zorder=5))
+        ax.text(x, y, f'${label_template}_{l}$',
+                ha='center', va='center',
+                fontsize=label_fontsize, fontweight='bold',
+                color='white', zorder=6)
     return pos
 
 
@@ -1850,20 +1842,19 @@ def _draw_panel_f_mp(ax, args):
     α_au weights. STEPHY's K4 has no self-loop (stephy/data.py), so
     the sum runs over u ≠ a — three terms for K4.
     """
-    ax.set_xlim(0, 15)
-    ax.set_ylim(0, 8)
+    ax.set_xlim(0, 11)
+    ax.set_ylim(0, 12.5)
     ax.set_aspect('equal', adjustable='box')
     for sp in ('top', 'right', 'left', 'bottom'):
         ax.spines[sp].set_visible(False)
     ax.set_xticks([])
     ax.set_yticks([])
 
-    # Title placed in axes-fraction coords so it aligns vertically
-    # with the titles of the other panel-(f) sub-panels regardless
-    # of their data ranges.
-    ax.text(0.5, 0.94, 'message passing layer',
+    # Title sits ABOVE the axes (axes-frac 1.02, matching mlp + pred)
+    # so all three panel-(f) sub-panel titles land at the same fig-y.
+    ax.text(0.5, 1.02, 'message passing layer',
             transform=ax.transAxes,
-            ha='center', va='top',
+            ha='center', va='bottom',
             fontsize=FS_F_HDR, fontweight='bold', color='#222')
 
     # Incoming-to-'a' attention spread wide so per-arrow widths are
@@ -1878,12 +1869,12 @@ def _draw_panel_f_mp(ax, args):
     }
 
     plate_thick   = 0.6
-    plate_height  = 4.0
+    plate_height  = 8.0
     plate_depth_x = 2.6
     plate_depth_y = 1.0
 
     # ----- Layer ℓ (LEFT plate) -------------------------------------
-    pl_l_x, pl_l_y = 0.4, 1.3
+    pl_l_x, pl_l_y = 0.4, 2.25
     origin_l, u_l, v_l = _draw_3d_plate(
         ax, pl_l_x, pl_l_y,
         thick=plate_thick, height=plate_height,
@@ -1892,13 +1883,13 @@ def _draw_panel_f_mp(ax, args):
     )
     pos_l = _draw_k4_on_face(
         ax, origin_l, u_l, v_l,
-        self_loc='a', label_template='h',
+        self_loc='', label_template='h',
         edge_attention=eatt,
-        label_fontsize=14,
+        label_fontsize=20,
     )
     ax.text(pl_l_x + plate_thick / 2, pl_l_y + 0.20,
             r'$\ell$',
-            ha='center', va='bottom', fontsize=18,
+            ha='center', va='bottom', fontsize=24,
             color='#666', style='italic')
 
     # ----- Aggregation + self pass-through ellipses (MIDDLE) --------
@@ -1906,11 +1897,11 @@ def _draw_panel_f_mp(ax, args):
     # neighbors u != v; then h_v^(l+1) = concat(h_v^(l), agg_v). The
     # "self vs neighbor" split lives in the CONCAT, not in two
     # separate alpha-gated messages.
-    msg_x = 7.6
-    msg_w, msg_h = 1.8, 1.0
+    msg_x = 5.0
+    msg_w, msg_h = 1.8, 1.5
     plate_mid_y = pl_l_y + plate_height / 2
-    self_xy = (msg_x, plate_mid_y + 1.30)
-    agg_xy  = (msg_x, plate_mid_y - 0.55)
+    self_xy = (msg_x, plate_mid_y + 2.50)
+    agg_xy  = (msg_x, plate_mid_y - 1.75)
     for cx_e, cy_e, label in [
         (self_xy[0], self_xy[1], r'$h_{a}^{(\ell)}$'),
         (agg_xy[0],  agg_xy[1],  r'$\mathrm{agg}_{a}$'),
@@ -1919,11 +1910,11 @@ def _draw_panel_f_mp(ax, args):
                              facecolor='#FFFFFF', edgecolor=C_MSG_EDGE,
                              lw=1.6, zorder=4))
         ax.text(cx_e, cy_e, label, ha='center', va='center',
-                fontsize=22, color='#222', zorder=5)
+                fontsize=28, color='#222', zorder=5)
     ax.text(agg_xy[0], agg_xy[1] - msg_h / 2 - 0.30,
             r'$\sum_{u \neq a}\, \alpha_{au}\, h_{u}^{(\ell)}$',
             ha='center', va='top',
-            fontsize=18, color='#444', style='italic')
+            fontsize=24, color='#444', style='italic')
 
     agg_left  = (agg_xy[0] - msg_w / 2 - 0.02, agg_xy[1])
     self_left = (self_xy[0] - msg_w / 2 - 0.02, self_xy[1])
@@ -1955,7 +1946,7 @@ def _draw_panel_f_mp(ax, args):
     ))
 
     # ----- Layer ℓ+1 (RIGHT plate) ----------------------------------
-    pl_r_x, pl_r_y = 9.7, pl_l_y
+    pl_r_x, pl_r_y = 7.0, pl_l_y
     origin_r, u_r, v_r = _draw_3d_plate(
         ax, pl_r_x, pl_r_y,
         thick=plate_thick, height=plate_height,
@@ -1964,23 +1955,39 @@ def _draw_panel_f_mp(ax, args):
     )
     pos_r = _draw_k4_on_face(
         ax, origin_r, u_r, v_r,
-        self_loc='a', label_template='h',
+        self_loc='', label_template='h',
         edge_attention=eatt,
-        label_fontsize=14,
+        label_fontsize=20,
     )
     ax.text(pl_r_x + plate_thick / 2, pl_r_y + 0.20,
             r'$\ell\!+\!1$',
-            ha='center', va='bottom', fontsize=18,
+            ha='center', va='bottom', fontsize=24,
             color='#666', style='italic')
 
-    # concat label + arrow into h_a in layer ℓ+1.
+    # concat label + arrows from h_a^(ℓ) and agg_a into concat, then
+    # one arrow from concat into h_a in layer ℓ+1.
     tx, ty = pos_r['a']
     concat_x = self_xy[0]
     concat_y = 0.5 * (self_xy[1] + agg_xy[1])
     ax.text(concat_x, concat_y, 'concat',
             ha='center', va='center',
-            fontsize=18, fontweight='bold',
+            fontsize=24, fontweight='bold',
             color='#333', style='italic', zorder=6)
+    # h_a^(ℓ) -> concat (downward)
+    ax.add_patch(FancyArrowPatch(
+        (self_xy[0], self_xy[1] - msg_h / 2),
+        (concat_x, concat_y + 0.45),
+        arrowstyle='-|>', color='#444',
+        lw=1.8, mutation_scale=16, zorder=4,
+    ))
+    # agg_a -> concat (upward)
+    ax.add_patch(FancyArrowPatch(
+        (agg_xy[0], agg_xy[1] + msg_h / 2),
+        (concat_x, concat_y - 0.45),
+        arrowstyle='-|>', color='#444',
+        lw=1.8, mutation_scale=16, zorder=4,
+    ))
+    # concat -> h_a in layer ℓ+1
     ax.add_patch(FancyArrowPatch(
         (concat_x + 0.55, concat_y), (tx, ty),
         connectionstyle='arc3,rad=-0.18',
@@ -1994,28 +2001,28 @@ def _draw_panel_f_mlp(ax):
     """MIDDLE sub-panel of panel (f): MLP head 256 → 128 → 64 → 32.
     Four amber 3D blocks in series with ReLU labels on the inter-
     block arrows. Output captions sit just below the block stack."""
-    ax.set_xlim(0, 9)
-    ax.set_ylim(0, 8)
+    ax.set_xlim(0, 6)
+    ax.set_ylim(0, 12.5)
     ax.set_aspect('equal', adjustable='box')
     for sp in ('top', 'right', 'left', 'bottom'):
         ax.spines[sp].set_visible(False)
     ax.set_xticks([])
     ax.set_yticks([])
 
-    ax.text(0.5, 0.94, 'mlp layer',
+    ax.text(0.5, 1.02, 'mlp layer',
             transform=ax.transAxes,
-            ha='center', va='top',
+            ha='center', va='bottom',
             fontsize=FS_F_HDR, fontweight='bold', color='#222')
 
     dims    = [256, 128, 64,  32]
-    heights = [2.4, 1.85, 1.4, 1.0]
+    heights = [5.8, 4.5, 3.4, 2.4]
     blk_w   = 0.55
     blk_dep = 0.22
     spacing = 0.85
-    centers_y = 4.0
+    centers_y = 6.25
     n_blocks = len(dims)
     total_blocks_w = n_blocks * blk_w + (n_blocks - 1) * spacing
-    mlp_x_left0 = (9.0 - total_blocks_w) / 2
+    mlp_x_left0 = (6.0 - total_blocks_w) / 2
 
     left_edges, right_edges = [], []
     for i, (d, h) in enumerate(zip(dims, heights)):
@@ -2026,7 +2033,7 @@ def _draw_panel_f_mlp(ax):
                         label=None)
         ax.text(x_left + blk_w / 2, centers_y, str(d),
                 ha='center', va='center',
-                fontsize=16, fontweight='bold', color='#222',
+                fontsize=22, fontweight='bold', color='#222',
                 zorder=6)
         left_edges.append(x_left)
         right_edges.append(x_left + blk_w)
@@ -2042,128 +2049,130 @@ def _draw_panel_f_mlp(ax):
         ax.text(0.5 * (x_src + x_dst),
                 centers_y + max(heights) / 2 + 0.22,
                 'ReLU', ha='center', va='bottom',
-                fontsize=14, color='#666', style='italic')
+                fontsize=18, color='#666', style='italic')
 
-    # Output captions below MLP stack.
-    cap_x = mlp_x_left0 + total_blocks_w / 2
-    ax.text(cap_x, centers_y - max(heights) / 2 - 0.55,
-            r'out_dim = 1  (point estimate)',
-            ha='center', va='center',
-            fontsize=14, color='#222')
-    ax.text(cap_x, centers_y - max(heights) / 2 - 1.10,
-            r'out_dim = 3  (CQR quantiles)',
-            ha='center', va='center',
-            fontsize=14, color='#222')
 
 
 def _draw_panel_f_predictions(ax):
     """RIGHT column of panel (f): per-location predictions on the K4.
-    Each Loc node carries its predicted (R_e [CP_lo, CP_hi], µ, SSS)
-    on a bordered card. Predicted index case (Loc_a) gets a gold
-    border + gold star + CP set caption (classification head)."""
-    ax.set_xlim(0, 22)
-    ax.set_ylim(0, 16)
+    K4 layout matches panel (e) — same diamond positions, same node
+    size — so panels (e) and (f) are visually paired. Each Loc node
+    carries its predicted (R_e [CP_lo, CP_hi], µ, SSS) on a bordered
+    card. Predicted index case (Loc_a) gets a gold border + gold star
+    + CP set caption (classification head)."""
+    # xlim and ylim match panel (e)'s K4 coordinate system EXACTLY,
+    # so the K4 here sits at the same physical x-coords as panel (e)
+    # above (both subplots occupy the right half of the figure under
+    # aspect='equal').
+    ax.set_xlim(-2, 14)
+    ax.set_ylim(0, 10)
     ax.set_aspect('equal', adjustable='box')
     for sp in ('top', 'right', 'left', 'bottom'):
         ax.spines[sp].set_visible(False)
     ax.set_xticks([])
     ax.set_yticks([])
 
-    # Column title (axes-fraction coords so it aligns with the other
-    # panel-(f) sub-panel titles).
-    ax.text(0.5, 0.94, 'per-location predictions',
+    # Title sits ABOVE the axes (axes-frac 1.02) so it doesn't
+    # overlap the a-card (whose top edge sits very close to ylim=10).
+    ax.text(0.5, 1.02, 'per-location predictions',
             transform=ax.transAxes,
-            ha='center', va='top',
+            ha='center', va='bottom',
             fontsize=FS_F_HDR, fontweight='bold', color='#222')
 
-    # K4 (standard diamond orientation, matches panel (e)).
+    # K4 — same diamond layout, node size, AND directed-arrow style
+    # as panel (e). No red highlight on Loc_a — the predicted index
+    # case is already marked by the gold-bordered prediction card.
     k4_positions = {
-        'a': (11.0, 10.0),
-        'b': (7.4,  7.0),
-        'c': (11.0, 4.0),
-        'd': (14.6, 7.0),
+        'a': (6.0, 7.6),
+        'b': (3.4, 5.0),
+        'c': (6.0, 2.4),
+        'd': (8.6, 5.0),
     }
     draw_k4_graph(
-        ax, target_loc=PANEL_F_PRED_INDEX,
+        ax, target_loc='',
         positions=k4_positions,
         node_size=72,
+        edge_attention={
+            ('a', 'b'): 0.45, ('b', 'a'): 0.70,
+            ('a', 'c'): 0.30, ('c', 'a'): 0.55,
+            ('a', 'd'): 0.20, ('d', 'a'): 0.50,
+            ('b', 'c'): 0.55, ('c', 'b'): 0.35,
+            ('b', 'd'): 0.40, ('d', 'b'): 0.65,
+            ('c', 'd'): 0.25, ('d', 'c'): 0.45,
+        },
     )
 
-    # Per-node prediction cards.
+    # Per-node prediction cards (scaled for the panel-(e)-sized K4).
+    # a/c offsets keep cards just inside ylim(0, 10). b/d offsets
+    # widened so the larger card_w (4.40) doesn't overlap nodes.
     card_offsets = {
-        'a': (0.0,  +2.05),
-        'b': (-3.40, 0.0),
-        'c': (0.0,  -2.05),
-        'd': (+3.40, 0.0),
+        'a': (0.0,  +1.40),
+        'b': (-2.90, 0.0),
+        'c': (0.0,  -1.40),
+        'd': (+2.90, 0.0),
     }
     for loc, (dx, dy) in card_offsets.items():
         nx, ny = k4_positions[loc]
         _draw_pred_card(ax, nx + dx, ny + dy, loc,
                         is_target=(loc == PANEL_F_PRED_INDEX))
 
-    # Predicted index case star + caption + CP set.
-    star_x = k4_positions['a'][0] + 1.45
-    star_y = k4_positions['a'][1] + 0.10
-    ax.plot(star_x, star_y, marker='*', markersize=42,
+    # Single-line classification readout: ★ + predicted index case +
+    # CP set inline. No bordered box.
+    star_x, star_y = 9.6, 8.90
+    ax.plot(star_x, star_y, marker='*', markersize=28,
             markerfacecolor='#FFD43B', markeredgecolor=C_INDEX_GLD,
-            markeredgewidth=1.8, linestyle='None', zorder=8)
-    ax.text(star_x + 0.45, star_y + 0.30,
-            'predicted\nindex case',
-            ha='left', va='bottom',
-            fontsize=14, fontweight='bold', style='italic',
-            color=C_INDEX_GLD, zorder=8)
+            markeredgewidth=1.4, linestyle='None', zorder=8)
     cp_set_str = ', '.join(f'Loc$_{{{l}}}$' for l in PANEL_F_PRED_CP_SET)
-    ax.text(star_x + 0.45, star_y - 0.55,
-            r'CP set (95%): $\{$' + cp_set_str + r'$\}$',
+    ax.text(star_x + 0.45, star_y,
+            f'predicted index case: Loc$_{{{PANEL_F_PRED_INDEX}}}$  '
+            f'[{cp_set_str}]',
             ha='left', va='center',
-            fontsize=14, color=C_PRED_INT, style='italic', zorder=8)
-
-    # Footer note explaining the bracketed numbers under each R_e.
-    ax.text(11.0, 0.55,
-            r'bracketed $R_e$ ranges = 95% conformal prediction intervals',
-            ha='center', va='center',
-            fontsize=13, color='#666', style='italic')
+            fontsize=20, fontweight='bold', style='italic',
+            color=C_INDEX_GLD, zorder=8)
 
     # Inlet anchor for inter-axes arrow from MLP. Pointed at the
     # left edge of Loc_b's card (the leftmost card).
-    in_x = card_offsets['b'][0] + k4_positions['b'][0] - 1.60 - 0.10
+    in_x = card_offsets['b'][0] + k4_positions['b'][0] - 1.20 - 0.10
     in_y = k4_positions['b'][1]
     return in_x, in_y
 
 
 def _draw_panel_f(fig, subplotspec, args):
-    """Panel (f): 3 sub-panels + 2 arrow blocks, mirroring panel (a).
-    LEFT    — message passing layer (LGAT)
-    MIDDLE  — MLP head (256 → 128 → 64 → 32)
+    """Render panel (c): inference pipeline.
+
+    LEFT    — message-passing layer (LGAT)
+    MIDDLE  — MLP head (256 -> 128 -> 64 -> 32)
     RIGHT   — per-location predictions K4
-    Arrows between carry $h_a$ (post-MP node embedding) and $\\hat{y}_a$
-    (per-location prediction). Width ratios chosen so that, under
-    aspect='equal', the three main sub-panels render at the same
+    Two arrow blocks between, carrying h_a^(L) (post-MP node embedding)
+    and y_hat_a (per-location prediction). Width ratios chosen so that,
+    under aspect='equal', the three main sub-panels render at the same
     physical height (so titles and bottoms align):
-        W_mp/H = 15/8, W_mlp/H = 9/8, W_pred/H = 22/16
-        => ratios 15 : 9 : 11."""
+        W_mp/H = 11/12.5, W_mlp/H = 6/12.5, W_pred/H = 16/10
+        => ratios 0.88 : 0.48 : 1.6 ≈ 11 : 6 : 20.
+    Pred takes ~50% of row width so its K4 sits in the right half of
+    the figure — same physical x-range as panel (b)'s graph-assemble
+    K4, so the two K4 diamonds align in x-coordinate when stacked.
+    """
+    # First column is a left spacer (no subplot) so mp+mlp group sits
+    # shifted right within the panel.
     gs_f = subplotspec.subgridspec(
-        1, 5,
-        width_ratios=[15.0, 3.0, 9.0, 3.0, 11.0],
+        1, 6,
+        width_ratios=[2.5, 11.0, 1.5, 6.0, 1.5, 20.0],
         wspace=0.04,
     )
-    ax_mp = fig.add_subplot(gs_f[0, 0])
+    ax_mp = fig.add_subplot(gs_f[0, 1])
     _draw_panel_f_mp(ax_mp, args)
 
-    ax_arr1 = fig.add_subplot(gs_f[0, 1])
-    _draw_arrow_block(ax_arr1,
-                      top_text=r'$h_a$',
-                      bottom_text='post-MP embedding')
+    ax_arr1 = fig.add_subplot(gs_f[0, 2])
+    _draw_arrow_block(ax_arr1, top_text='', bottom_text='')
 
-    ax_mlp = fig.add_subplot(gs_f[0, 2])
+    ax_mlp = fig.add_subplot(gs_f[0, 3])
     _draw_panel_f_mlp(ax_mlp)
 
-    ax_arr2 = fig.add_subplot(gs_f[0, 3])
-    _draw_arrow_block(ax_arr2,
-                      top_text=r'$\hat{y}_a$',
-                      bottom_text='per-Loc readout')
+    ax_arr2 = fig.add_subplot(gs_f[0, 4])
+    _draw_arrow_block(ax_arr2, top_text='', bottom_text='')
 
-    ax_pred = fig.add_subplot(gs_f[0, 4])
+    ax_pred = fig.add_subplot(gs_f[0, 5])
     _draw_panel_f_predictions(ax_pred)
 
     return ax_mp, ax_mlp, ax_pred
@@ -2203,34 +2212,32 @@ def main():
     # draw_engine/draw_tree then fills the entire slot.
     # Third row (panel f) holds the combined LGAT message-passing +
     # MLP-head panel alongside the per-location predictions K4.
-    fig = plt.figure(figsize=(40, 50))
+    fig = plt.figure(figsize=(40, 62))
     outer = fig.add_gridspec(
         3, 1,
-        height_ratios=[11.11, 26.0, 10.0],
+        height_ratios=[17.0, 26.0, 13.5],
         hspace=0.06,
     )
 
-    ax_a1, ax_a2, ax_a3 = _draw_panel_a(fig, outer[0])
-    ax_tree, ax_kde, ax_conv, ax_graph = _draw_panels_bcde(
+    ax_a1, ax_a2 = _draw_panel_a(fig, outer[0])
+    ax_tree, ax_kde, ax_conv, ax_graph = _draw_panel_b(
         fig, outer[1], args,
     )
     ax_mp, ax_mlp, ax_pred = _draw_panel_f(fig, outer[2], args)
 
     # Panel letters.
-    panel_label_kw = dict(fontsize=FS_KDE_HDR + 6, fontweight='bold',
+    panel_label_kw = dict(fontsize=FS_KDE_HDR + 32, fontweight='bold',
                           va='top', ha='left', color='#222')
     ax_a1.text(0.02, 0.98, '(a)',
                transform=ax_a1.transAxes, **panel_label_kw)
     ax_tree.text(0.015, 0.99, '(b)',
                  transform=ax_tree.transAxes, **panel_label_kw)
-    ax_conv.text(0.015, 0.99, '(c)',
-                 transform=ax_conv.transAxes, **panel_label_kw)
-    ax_kde.text(0.015, 0.99, '(d)',
-                transform=ax_kde.transAxes, **panel_label_kw)
-    ax_graph.text(0.015, 0.99, '(e)',
-                  transform=ax_graph.transAxes, **panel_label_kw)
-    ax_mp.text(0.015, 0.99, '(f)',
-               transform=ax_mp.transAxes, **panel_label_kw)
+    # (c) label uses fig-frac x so it aligns with (a)/(b) at the
+    # left edge of the figure gridspec, regardless of mp's shifted
+    # position within panel f.
+    bb_mp = ax_mp.get_position()
+    y_c = bb_mp.y0 + 0.99 * (bb_mp.y1 - bb_mp.y0)
+    fig.text(0.130, y_c, '(c)', **panel_label_kw)
 
     fig.savefig(args.out_pdf, bbox_inches='tight')
     print(f'Saved: {args.out_pdf}')
