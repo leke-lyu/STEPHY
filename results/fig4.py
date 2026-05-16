@@ -49,12 +49,12 @@ from shapely.geometry import box, MultiPolygon
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 18,
-    'axes.labelsize': 22,
-    'axes.titlesize': 24,
-    'xtick.labelsize': 18,
-    'ytick.labelsize': 18,
-    'legend.fontsize': 20,
+    'font.size': 6,
+    'axes.labelsize': 7,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 5,
+    'ytick.labelsize': 5,
+    'legend.fontsize': 6,
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -111,7 +111,7 @@ R0_YLIM = (0.8, 3.0)
 VIOLIN_FACE = '#A9C5DE'
 ML_COLOR = '#D62728'
 
-FIG_WIDTH = 12
+FIG_WIDTH = 3.41
 FIG_RATIO = 2
 Y_GAP = 500        # vertical y-data gap between stacked trees (must fit a label)
 LABEL_OFFSET = 80  # label baseline above each tree's top tip (y-data units)
@@ -289,7 +289,7 @@ def draw_tree(ax, tree, y_offset, subtree_sizes):
     log_max = np.log2(max(max_size, 2))
 
     def vert_lw(n):
-        return 0.4 + 3.0 * np.log2(max(n, 2)) / log_max
+        return 0.2 + 0.8 * np.log2(max(n, 2)) / log_max
 
     h_segments, h_colors = [], []
     v_by_lw = {}
@@ -370,47 +370,31 @@ def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
             continue
         lo, hi = np.percentile(d, [2.5, 97.5])
         med = np.median(d)
-        ax.vlines(i, lo, hi, color='#222222', linewidth=2.6, zorder=3,
+        ax.vlines(i, lo, hi, color='#222222', linewidth=0.8, zorder=3,
                   capstyle='round')
         ax.hlines(med, i - 0.22, i + 0.22,
-                  color='#222222', linewidth=2.8, zorder=4,
+                  color='#222222', linewidth=1.0, zorder=4,
                   capstyle='round')
 
     for i, v in enumerate(ml_pts):
         if v is None or (isinstance(v, float) and np.isnan(v)):
             continue
-        ax.scatter([i], [v], marker='*', s=240, color=ML_COLOR,
-                   edgecolors='black', linewidths=0.9, zorder=5)
+        ax.scatter([i], [v], marker='*', s=35, color=ML_COLOR,
+                   edgecolors='black', linewidths=0.4, zorder=5)
 
     ax.set_xlim(-0.6, len(regions) - 0.4)
     ax.set_ylim(*ylim)
     ax.set_xticks(positions)
     if show_xticks:
-        ax.set_xticklabels(regions, rotation=45, ha='right', fontsize=11)
+        ax.set_xticklabels(regions, rotation=45, ha='right', fontsize=5)
     else:
         ax.set_xticklabels([])
-    ax.set_ylabel(ylabel, fontsize=13)
-    ax.tick_params(axis='y', labelsize=11)
+    ax.set_ylabel(ylabel, fontsize=6)
+    ax.tick_params(axis='y', labelsize=5)
     ax.grid(True, axis='y', alpha=0.3, linewidth=0.5)
     ax.set_axisbelow(True)
     for spine in ('top', 'right'):
         ax.spines[spine].set_visible(False)
-
-
-def violin_legend_handles():
-    """Handles for the per-column violin legend (one legend per violin column)."""
-    return [
-        mpatches.Patch(color=VIOLIN_FACE, alpha=0.85,
-                       ec='#5B7E9E', lw=0.6,
-                       label='Bootstrap distribution'),
-        Line2D([0], [0], color='#222', lw=2.8, label='95% bootstrap CI'),
-        Line2D([0], [0], marker='_', color='#222', lw=0,
-               markeredgewidth=2.8, markersize=18,
-               label='Bootstrap median'),
-        Line2D([0], [0], marker='*', color=ML_COLOR, lw=0,
-               markeredgecolor='black', markeredgewidth=0.9, markersize=14,
-               label='ML estimate'),
-    ]
 
 
 def draw_choropleth(ax, gdf, values, label, norm, cmap):
@@ -418,14 +402,14 @@ def draw_choropleth(ax, gdf, values, label, norm, cmap):
     merged = gdf.copy()
     merged['val'] = merged['region'].map(values)
     merged.plot(ax=ax, column='val', cmap=cmap, norm=norm,
-                edgecolor='#333333', linewidth=0.8)
+                edgecolor='#333333', linewidth=0.4)
 
     ax.set_xlim(7.9, 12.7)
     ax.set_ylim(54.45, 57.85)
     ax.set_aspect(1 / np.cos(np.radians(56)))
     ax.axis('off')
-    ax.set_title(label, fontsize=16, fontweight='bold',
-                 color='#333333', pad=4)
+    ax.set_title(label, fontsize=7, fontweight='bold',
+                 color='#333333', pad=2)
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +484,7 @@ def main():
         5, 5, figure=fig,
         width_ratios=[FIG_WIDTH, map_width, violin_width,
                       map_width, violin_width],
-        wspace=0.18, hspace=0.18)
+        wspace=0.40, hspace=0.18)
 
     # --- Left: stacked trees ---
     ax_tree = fig.add_subplot(gs[:, 0])
@@ -516,15 +500,15 @@ def main():
         ax_tree.text(
             label_x, cumulative_y + tree.ySpan + LABEL_OFFSET,
             f'{label} (n={n_tips:,})',
-            ha='left', va='bottom', fontsize=18, fontweight='bold',
+            ha='left', va='bottom', fontsize=6, fontweight='bold',
             color='#333333')
         cumulative_y += tree.ySpan + Y_GAP
 
     ax_tree.autoscale_view()
     for spine in ('top', 'right', 'left'):
         ax_tree.spines[spine].set_visible(False)
-    ax_tree.spines['bottom'].set_linewidth(0.8)
-    ax_tree.tick_params(axis='x', direction='out', length=5)
+    ax_tree.spines['bottom'].set_linewidth(0.4)
+    ax_tree.tick_params(axis='x', direction='out', length=2)
     ax_tree.tick_params(axis='y', size=0)
     ax_tree.set_yticklabels([])
     ax_tree.grid(axis='x', ls='--', alpha=0.3, linewidth=0.3)
@@ -535,11 +519,11 @@ def main():
     plt.setp(ax_tree.get_xticklabels(), rotation=45, ha='right')
 
     handles = [Line2D([0], [0], marker='o', color='w', markerfacecolor=c,
-                      markersize=14, label=div)
+                      markersize=5, label=div)
                for div, c in DIVISION_COLORS.items()]
     ax_tree.legend(handles=handles, loc='lower left', frameon=False, ncol=1)
     ax_tree.text(-0.02, 1.0, 'a', transform=ax_tree.transAxes,
-                 fontsize=36, fontweight='bold', va='top', ha='right')
+                 fontsize=9, fontweight='bold', va='top', ha='right')
 
     # --- SSS / R0 choropleth columns (1, 3) — panel letters span map+violin ---
     map_configs = [
@@ -553,12 +537,12 @@ def main():
             values = data.get(label)
             if not values:
                 ax.axis('off')
-                ax.set_title(label, fontsize=16, fontweight='bold',
+                ax.set_title(label, fontsize=7, fontweight='bold',
                              color='#333333')
                 continue
             draw_choropleth(ax, gdf, values, label, norm, cmap)
             ax.text(-0.08, 1.05, panel_letters[i], transform=ax.transAxes,
-                    fontsize=36, fontweight='bold', va='top', ha='right')
+                    fontsize=9, fontweight='bold', va='top', ha='right')
         last_ax[col] = ax
 
     # --- SSS / R0 bootstrap violin columns (2, 4) — share panel letter with
@@ -579,36 +563,29 @@ def main():
                 continue
             draw_violin(ax, ml, boot, ylim, ylabel,
                         show_xticks=(i == n_rows - 1))
-            if i == 0:  # legend on top of each violin column
-                ax.legend(handles=violin_legend_handles(),
-                          loc='lower center',
-                          bbox_to_anchor=(0.5, 1.02),
-                          ncol=2, fontsize=10, frameon=False,
-                          handlelength=1.5, columnspacing=1.4,
-                          handletextpad=0.5)
 
-    # --- Colorbars aligned with the bottom of the tree column ---
+    # --- Colorbars: width = map column only; fewer ticks for breathing room ---
     fig.canvas.draw()
     tree_pos = ax_tree.get_position()
-    sss_pos = last_ax[1].get_position()
-    r0_pos = last_ax[3].get_position()
+    sss_map_pos = last_ax[1].get_position()
+    r0_map_pos  = last_ax[3].get_position()
     cbar_y = tree_pos.y0 - 0.03
 
     sm_sss = plt.cm.ScalarMappable(cmap=SSS_CMAP, norm=sss_norm)
-    cbar_ax = fig.add_axes([sss_pos.x0 + 0.02, cbar_y,
-                            sss_pos.width - 0.04, 0.008])
+    cbar_ax = fig.add_axes([sss_map_pos.x0 + 0.005, cbar_y,
+                            sss_map_pos.width - 0.01, 0.008])
     cbar = fig.colorbar(sm_sss, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label('Source-Sink Score', fontsize=14)
-    cbar.set_ticks([-1, -0.5, 0, 0.5, 1])
-    cbar.ax.tick_params(labelsize=12)
+    cbar.set_label('Source-Sink Score', fontsize=6)
+    cbar.set_ticks([-1, 0, 1])
+    cbar.ax.tick_params(labelsize=5)
 
     sm_r0 = plt.cm.ScalarMappable(cmap=R0_CMAP, norm=r0_norm)
-    cbar_ax = fig.add_axes([r0_pos.x0 + 0.02, cbar_y,
-                            r0_pos.width - 0.04, 0.008])
+    cbar_ax = fig.add_axes([r0_map_pos.x0 + 0.005, cbar_y,
+                            r0_map_pos.width - 0.01, 0.008])
     cbar = fig.colorbar(sm_r0, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label(r'$R_e$', fontsize=14)
-    cbar.set_ticks([0.8, 1.5, 2.0, 2.5, 3.0])
-    cbar.ax.tick_params(labelsize=12)
+    cbar.set_label(r'$R_e$', fontsize=6)
+    cbar.set_ticks([0.8, 2.0, 3.0])
+    cbar.ax.tick_params(labelsize=5)
 
     out = out_dir / 'fig4.pdf'
     fig.savefig(out, bbox_inches='tight')

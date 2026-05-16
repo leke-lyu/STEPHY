@@ -26,12 +26,12 @@ from scipy.stats import pearsonr
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 11,
-    'axes.labelsize': 12,
-    'axes.titlesize': 14,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 11,
+    'font.size': 6,
+    'axes.labelsize': 6,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 5,
+    'ytick.labelsize': 5,
+    'legend.fontsize': 6,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -139,13 +139,13 @@ def plot_regression(ax, true_vals, pred_vals, target):
     ax.plot(cfg['lims'], cfg['lims'], 'k--', lw=1)
     ax.set_xlim(cfg['lims']);  ax.set_xticks(cfg['ticks'])
     ax.set_ylim(cfg['lims']);  ax.set_yticks(cfg['ticks'])
-    ax.set_xlabel('True', fontsize=10)
-    ax.set_ylabel('Predicted', fontsize=10)
+    ax.set_xlabel('True', fontsize=6)
+    ax.set_ylabel('Predicted', fontsize=6)
 
     m = regression_metrics(true_vals, pred_vals)
     if m:
         info = f"R\u00b2 = {m['R2']:.4f}\nr  = {m['Pearson_r']:.4f}\nMSE = {m['MSE']:.4f}"
-        ax.text(0.95, 0.05, info, transform=ax.transAxes, fontsize=9,
+        ax.text(0.95, 0.05, info, transform=ax.transAxes, fontsize=5,
                 va='bottom', ha='right', bbox=INFO_BOX)
 
 
@@ -156,18 +156,18 @@ def plot_classification(ax, true_vals, pred_vals, target):
     accuracies = [np.mean(pred_int[true_int == s] == s) for s in states]
     overall_acc = np.mean(true_int == pred_int)
 
-    ax.plot(states, accuracies, 'D', color=TARGET_COLORS[target], ms=8,
-            markeredgecolor='#333333', markeredgewidth=0.8)
-    ax.axhline(y=overall_acc, color='k', ls='--', lw=1)
+    ax.plot(states, accuracies, 'D', color=TARGET_COLORS[target], ms=4,
+            markeredgecolor='#333333', markeredgewidth=0.5)
+    ax.axhline(y=overall_acc, color='k', ls='--', lw=0.7)
 
     cfg = AXIS_CFG[target]
     ax.set_xlim(cfg['lims']);  ax.set_xticks(cfg['ticks'])
     ax.set_ylim(cfg['ylims']);  ax.set_yticks(cfg['yticks'])
-    ax.set_xlabel('State', fontsize=10)
-    ax.set_ylabel('Accuracy', fontsize=10)
+    ax.set_xlabel('State', fontsize=6)
+    ax.set_ylabel('Accuracy', fontsize=6)
 
     ax.text(0.95, 0.05, f"Overall Acc = {overall_acc:.4f}",
-            transform=ax.transAxes, fontsize=9, va='bottom', ha='right',
+            transform=ax.transAxes, fontsize=5, va='bottom', ha='right',
             bbox=INFO_BOX)
 
 
@@ -183,12 +183,12 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu/100k_diverse_population_result')
+                        default='/Users/lukelyu/Desktop/trained_model/simu/100k_diverse_population_result')
     args = parser.parse_args()
     base_dir = args.base_dir
 
     n_targets = len(TARGETS)
-    fig = plt.figure(figsize=(18, 10))
+    fig = plt.figure(figsize=(8.57, 4.76))
     gs = gridspec.GridSpec(2, n_targets, figure=fig,
                            height_ratios=[1, 1], hspace=0.05, wspace=0.35)
 
@@ -208,9 +208,9 @@ def main():
 
         ax.set_box_aspect(1)
         ax.grid(True, alpha=0.3)
-        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
-        ax.text(-0.15, 1.02, chr(ord('a') + col), transform=ax.transAxes,
-                fontsize=18, fontweight='bold', va='bottom', ha='left')
+        ax.set_title(TARGET_LABELS[target], fontsize=7, fontweight='bold')
+        ax.text(-0.18, 1.04, chr(ord('a') + col), transform=ax.transAxes,
+                fontsize=9, fontweight='bold', va='bottom', ha='left')
 
     # -- Row 2 (e-h): R2/accuracy vs interval_width/set_size ----------------
     ROW2_XLIMS = {
@@ -232,31 +232,31 @@ def main():
                 continue
             x_val = cp['mean_set_size'] if is_cls else cp['mean_interval_width']
             ax.scatter(x_val, score, color=color, marker=marker,
-                       s=120, edgecolors='white', linewidths=0.5, zorder=3)
+                       s=30, edgecolors='white', linewidths=0.4, zorder=3)
             ax.annotate(pipeline, (x_val, score), textcoords='offset points',
-                        xytext=(6, -4), fontsize=8, color=color)
+                        xytext=(4, -3), fontsize=5, color=color)
 
         ax.set_xlim(ROW2_XLIMS[target])
         ax.set_ylim(0.5, 1.0)
         ax.set_box_aspect(1)
         ax.set_xlabel('Prediction uncertainty (set size)' if is_cls
                       else 'Prediction uncertainty (interval width)',
-                      fontsize=10)
-        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
+                      fontsize=6)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=6)
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
-        ax.text(-0.15, 1.02, chr(ord('e') + col), transform=ax.transAxes,
-                fontsize=18, fontweight='bold', va='bottom', ha='left')
+        ax.text(-0.18, 1.04, chr(ord('e') + col), transform=ax.transAxes,
+                fontsize=9, fontweight='bold', va='bottom', ha='left')
 
     # -- Shared legend ------------------------------------------------------
     legend_handles = [
         Line2D([0], [0], marker=PIPELINE_STYLE[p][1], color='w', label=p,
                markerfacecolor=PIPELINE_STYLE[p][0], markeredgecolor='white',
-               markeredgewidth=0.5, markersize=9)
+               markeredgewidth=0.4, markersize=5)
         for p in PIPELINES
     ]
     fig.legend(handles=legend_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.03))
+               ncol=len(PIPELINES), fontsize=6, bbox_to_anchor=(0.5, -0.02))
 
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig2.pdf')
     fig.savefig(out_path, bbox_inches='tight')
