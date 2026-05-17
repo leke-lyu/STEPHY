@@ -188,7 +188,7 @@ def main():
     base_dir = args.base_dir
 
     n_targets = len(TARGETS)
-    fig = plt.figure(figsize=(8.57, 4.76))
+    fig = plt.figure(figsize=(8.55, 4.76))
     gs = gridspec.GridSpec(2, n_targets, figure=fig,
                            height_ratios=[1, 1], hspace=0.05, wspace=0.35)
 

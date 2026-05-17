@@ -29,12 +29,12 @@ from scipy.stats import pearsonr
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 11,
-    'axes.labelsize': 12,
-    'axes.titlesize': 14,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 11,
+    'font.size': 6,
+    'axes.labelsize': 6,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 5,
+    'ytick.labelsize': 5,
+    'legend.fontsize': 6,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -112,17 +112,17 @@ def regression_metrics(true_vals, pred_vals):
 def plot_regression(ax, true_vals, pred_vals, target):
     """Scatter plot of true vs predicted with R2/r/MSE annotation."""
     cfg = AXIS_CFG[target]
-    ax.scatter(true_vals, pred_vals, alpha=0.1, s=5, color=TARGET_COLORS[target])
-    ax.plot(cfg['lims'], cfg['lims'], 'k--', lw=1)
+    ax.scatter(true_vals, pred_vals, alpha=0.1, s=2, color=TARGET_COLORS[target])
+    ax.plot(cfg['lims'], cfg['lims'], 'k--', lw=0.5)
     ax.set_xlim(cfg['lims']);  ax.set_xticks(cfg['ticks'])
     ax.set_ylim(cfg['lims']);  ax.set_yticks(cfg['ticks'])
-    ax.set_xlabel('True', fontsize=10)
-    ax.set_ylabel('Predicted', fontsize=10)
+    ax.set_xlabel('True', fontsize=6)
+    ax.set_ylabel('Predicted', fontsize=6)
 
     m = regression_metrics(true_vals, pred_vals)
     if m:
         info = f"R² = {m['R2']:.4f}\nr  = {m['Pearson_r']:.4f}\nMSE = {m['MSE']:.4f}"
-        ax.text(0.95, 0.05, info, transform=ax.transAxes, fontsize=9,
+        ax.text(0.95, 0.05, info, transform=ax.transAxes, fontsize=5,
                 va='bottom', ha='right', bbox=INFO_BOX)
 
 
@@ -133,18 +133,18 @@ def plot_classification(ax, true_vals, pred_vals, target):
     accuracies = [np.mean(pred_int[true_int == s] == s) for s in states]
     overall_acc = np.mean(true_int == pred_int)
 
-    ax.plot(states, accuracies, 'D', color=TARGET_COLORS[target], ms=8,
-            markeredgecolor='#333333', markeredgewidth=0.8)
-    ax.axhline(y=overall_acc, color='k', ls='--', lw=1)
+    ax.plot(states, accuracies, 'D', color=TARGET_COLORS[target], ms=4,
+            markeredgecolor='#333333', markeredgewidth=0.4)
+    ax.axhline(y=overall_acc, color='k', ls='--', lw=0.5)
 
     cfg = AXIS_CFG[target]
     ax.set_xlim(cfg['lims']);  ax.set_xticks(cfg['ticks'])
     ax.set_ylim(cfg['ylims']);  ax.set_yticks(cfg['yticks'])
-    ax.set_xlabel('State', fontsize=10)
-    ax.set_ylabel('Accuracy', fontsize=10)
+    ax.set_xlabel('State', fontsize=6)
+    ax.set_ylabel('Accuracy', fontsize=6)
 
     ax.text(0.95, 0.05, f"Overall Acc = {overall_acc:.4f}",
-            transform=ax.transAxes, fontsize=9, va='bottom', ha='right',
+            transform=ax.transAxes, fontsize=5, va='bottom', ha='right',
             bbox=INFO_BOX)
 
 
@@ -161,14 +161,14 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--gen_root', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu',
+                        default='/Users/lukelyu/Desktop/trained_model/simu',
                         help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
     gen_root = args.gen_root
 
     n_cols = len(TARGETS)
     n_rows = len(SCALES)
-    fig = plt.figure(figsize=(4.5 * n_cols, 4.5 * n_rows))
+    fig = plt.figure(figsize=(2.1 * n_cols, 2.1 * n_rows))
     gs = gridspec.GridSpec(n_rows, n_cols, figure=fig, hspace=0.35, wspace=0.35)
 
     panel_idx = 0
@@ -191,15 +191,15 @@ def main():
             ax.grid(True, alpha=0.3)
 
             if row == 0:
-                ax.set_title(TARGET_LABELS[target], fontsize=12,
+                ax.set_title(TARGET_LABELS[target], fontsize=7,
                              fontweight='bold')
             if col == 0:
                 ax.text(-0.32, 0.5, SCALE_LABELS[scale],
-                        transform=ax.transAxes, fontsize=13, fontweight='bold',
+                        transform=ax.transAxes, fontsize=7, fontweight='bold',
                         rotation=90, va='center', ha='center')
 
             ax.text(-0.15, 1.02, chr(ord('a') + panel_idx),
-                    transform=ax.transAxes, fontsize=18, fontweight='bold',
+                    transform=ax.transAxes, fontsize=9, fontweight='bold',
                     va='bottom', ha='left')
             panel_idx += 1
 

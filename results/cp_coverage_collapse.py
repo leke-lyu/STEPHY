@@ -38,12 +38,12 @@ from sklearn.metrics import r2_score
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 11,
-    'axes.labelsize': 12,
-    'axes.titlesize': 14,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 11,
+    'font.size': 6,
+    'axes.labelsize': 6,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 5,
+    'ytick.labelsize': 5,
+    'legend.fontsize': 6,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -146,9 +146,9 @@ def make_pipeline_handles():
     """Build legend handles for the two pipelines."""
     return [
         Line2D([0], [0], marker=PIPELINE_STYLE[p][1],
-               color=PIPELINE_STYLE[p][0], lw=2, label=p,
+               color=PIPELINE_STYLE[p][0], lw=1, label=p,
                markerfacecolor=PIPELINE_STYLE[p][0],
-               markeredgecolor='white', markeredgewidth=0.8, markersize=8)
+               markeredgecolor='white', markeredgewidth=0.4, markersize=5)
         for p in PIPELINES
     ]
 
@@ -167,14 +167,14 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--gen_root', type=str,
-                        default='/Users/lukelyu/Desktop/data/simu',
+                        default='/Users/lukelyu/Desktop/trained_model/simu',
                         help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
 
     gen_points = load_gen_points(args.gen_root)
     pipeline_handles = make_pipeline_handles()
 
-    fig = plt.figure(figsize=(18, 10))
+    fig = plt.figure(figsize=(8.57, 4.76))
     gs = gridspec.GridSpec(2, 4, figure=fig,
                            height_ratios=[1, 1], hspace=0.05, wspace=0.35)
 
@@ -186,22 +186,22 @@ def main():
         for scale, pipeline, x_val, y_val, _cov in gen_points[target]:
             color, marker = PIPELINE_STYLE[pipeline]
             ax.scatter(x_val, y_val, color=color, marker=marker,
-                       s=120, edgecolors='white', linewidths=0.5, zorder=3)
+                       s=30, edgecolors='white', linewidths=0.3, zorder=3)
             ax.annotate(scale, (x_val, y_val), textcoords='offset points',
-                        xytext=(6, -4), fontsize=8, color=color)
+                        xytext=(4, -3), fontsize=5, color=color)
 
         ax.set_xlim(ROW1_XLIMS[target])
         ax.set_ylim(0.5, 1.0)
         ax.set_box_aspect(1)
         ax.set_xlabel('Prediction uncertainty (set size)' if is_cls
                       else 'Prediction uncertainty (interval width)',
-                      fontsize=10)
-        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=12)
-        ax.set_title(TARGET_LABELS[target], fontsize=12, fontweight='bold')
+                      fontsize=6)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=6)
+        ax.set_title(TARGET_LABELS[target], fontsize=7, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.15, 1.02, chr(ord('a') + col), transform=ax.transAxes,
-                fontsize=18, fontweight='bold', va='bottom', ha='left')
+                fontsize=9, fontweight='bold', va='bottom', ha='left')
 
     # -- Row 2 (e-h): empirical CP coverage across population scales --------
     scale_x = np.arange(len(SCALES))
@@ -219,36 +219,36 @@ def main():
             ys = by_pipeline[pipeline]
             if all(v is None for v in ys):
                 continue
-            ax.plot(scale_x, ys, marker=marker, color=color, lw=2,
-                    markersize=9, markeredgecolor='white', markeredgewidth=0.8,
+            ax.plot(scale_x, ys, marker=marker, color=color, lw=1,
+                    markersize=5, markeredgecolor='white', markeredgewidth=0.4,
                     zorder=3)
             for xi, v in zip(scale_x, ys):
                 if v is None:
                     continue
                 ax.annotate(f'{v:.2f}', (xi, v), textcoords='offset points',
-                            xytext=(0, 8), ha='center', fontsize=8, color=color)
+                            xytext=(0, 5), ha='center', fontsize=5, color=color)
             if nominal is None and ys[0] is not None:
                 nominal = ys[0]
 
         if nominal is not None:
-            ax.axhline(nominal, color='#888888', ls='--', lw=1, zorder=1,
+            ax.axhline(nominal, color='#888888', ls='--', lw=0.5, zorder=1,
                        label=f'X1 nominal ({nominal:.2f})')
-            ax.legend(loc='lower left', fontsize=8, frameon=False)
+            ax.legend(loc='lower left', fontsize=5, frameon=False)
 
         ax.set_xticks(scale_x)
         ax.set_xticklabels(SCALES)
         ax.set_xlim(-0.3, len(SCALES) - 0.7)
         ax.set_ylim(0.0, 1.05)
         ax.set_box_aspect(1)
-        ax.set_xlabel('Population scale', fontsize=10)
-        ax.set_ylabel('Empirical CP coverage', fontsize=12)
+        ax.set_xlabel('Population scale', fontsize=6)
+        ax.set_ylabel('Empirical CP coverage', fontsize=6)
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.15, 1.02, chr(ord('e') + col), transform=ax.transAxes,
-                fontsize=18, fontweight='bold', va='bottom', ha='left')
+                fontsize=9, fontweight='bold', va='bottom', ha='left')
 
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=11, bbox_to_anchor=(0.5, 0.03))
+               ncol=len(PIPELINES), fontsize=6, bbox_to_anchor=(0.5, 0.03))
 
     out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             'cp_coverage_collapse.pdf')

@@ -55,12 +55,12 @@ class _Tee:
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 11,
-    'axes.labelsize': 12,
-    'axes.titlesize': 13,
-    'xtick.labelsize': 9,
-    'ytick.labelsize': 9,
-    'legend.fontsize': 9,
+    'font.size': 6,
+    'axes.labelsize': 6,
+    'axes.titlesize': 7,
+    'xtick.labelsize': 5,
+    'ytick.labelsize': 5,
+    'legend.fontsize': 5,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -167,7 +167,7 @@ def attach_oracles(sss_df, nf_root):
 def plot(columns, titles, subtitles, output_path):
     """Top row: rank-of-true-top-1 histograms. Bottom row: Spearman-ρ histograms."""
     ncols = len(columns)
-    fig, axes = plt.subplots(2, ncols, figsize=(4.6 * ncols, 7), sharey='row',
+    fig, axes = plt.subplots(2, ncols, figsize=(2.1 * ncols, 4.2), sharey='row',
                              squeeze=False)
     palette = ['#4C72B0', '#DD8452', '#55A868', '#8172B2']
 
@@ -180,7 +180,7 @@ def plot(columns, titles, subtitles, output_path):
 
         ax_rank = axes[0, j]
         ax_rank.hist(df['top_sss_rank_in_x'], bins=bins_rank,
-                     edgecolor='black', color=color)
+                     edgecolor='black', linewidth=0.3, color=color)
         ax_rank.set_xticks(range(1, n_loc + 1))
         ax_rank.set_xlabel(f'Rank of true-SSS top-1 in\n{subtitle} ordering (1 = match)')
         ax_rank.set_title(title)
@@ -194,10 +194,11 @@ def plot(columns, titles, subtitles, output_path):
 
         ax_rho = axes[1, j]
         rhos = df['spearman_rho'].dropna()
-        ax_rho.hist(rhos, bins=bins_rho, edgecolor='black', color=color)
-        ax_rho.axvline(0, color='grey', linestyle='--', linewidth=0.8)
+        ax_rho.hist(rhos, bins=bins_rho, edgecolor='black', linewidth=0.3,
+                    color=color)
+        ax_rho.axvline(0, color='grey', linestyle='--', linewidth=0.4)
         ax_rho.axvline(rhos.median(), color='red', linestyle='-',
-                       linewidth=1.5, label=f'median = {rhos.median():.3f}')
+                       linewidth=0.8, label=f'median = {rhos.median():.3f}')
         ax_rho.set_xlim(-1.05, 1.05)
         ax_rho.set_xlabel(f'Spearman ρ (rank_SSS, rank_{subtitle})')
         if j == 0:

@@ -53,7 +53,7 @@ from matplotlib.patches import (
 # Publication-quality matplotlib defaults.
 mpl.rcParams.update({
     'font.family':       'sans-serif',
-    'font.sans-serif':   ['Helvetica', 'Arial', 'DejaVu Sans'],
+    'font.sans-serif':   ['Arial', 'Helvetica', 'DejaVu Sans'],
     'mathtext.fontset':  'stixsans',
     'pdf.fonttype':      42,
     'ps.fonttype':       42,
@@ -2105,18 +2105,21 @@ def _draw_panel_f_predictions(ax):
     # Single-line classification readout: ★ + index-case prediction +
     # CP set inline. Font / color match the panel-(a) caption
     # ("Loc_a, the index case") so the question-answer pair reads
-    # consistently across panels.
-    star_x, star_y = 9.6, 8.90
+    # consistently across panels. Placed below the K4 (mirrors the
+    # title that sits above at axes-frac 1.02) so the upper-right
+    # area stays empty and the figure trims tighter horizontally.
+    star_x, star_y = 3.30, -0.6
     ax.plot(star_x, star_y, marker='*', markersize=7,
             markerfacecolor='#FFD43B', markeredgecolor=C_INDEX_GLD,
-            markeredgewidth=0.35, linestyle='None', zorder=8)
+            markeredgewidth=0.35, linestyle='None', zorder=8,
+            clip_on=False)
     cp_set_str = ', '.join(f'Loc$_{{{l}}}$' for l in PANEL_F_PRED_CP_SET)
     ax.text(star_x + 0.45, star_y,
             f'index case: Loc$_{{{PANEL_F_PRED_INDEX}}}$  '
             f'[{cp_set_str}]',
             ha='left', va='center',
             fontsize=FS_PANEL_A_QUES, fontweight='bold', style='italic',
-            color=C_INDEX_GLD, zorder=8)
+            color=C_INDEX_GLD, zorder=8, clip_on=False)
 
     # Inlet anchor for inter-axes arrow from MLP. Pointed at the
     # left edge of Loc_b's card (the leftmost card).
@@ -2217,15 +2220,15 @@ def main():
     # outer gridspec, taken from ax_tree which sits flush with the
     # column edge in panel b). Each label's fig-y is the top of its
     # respective panel so they sit at the title row of each panel.
-    panel_label_kw = dict(fontsize=FS_KDE_HDR + 3, fontweight='bold',
-                          va='top', ha='left', color='#222')
+    panel_label_kw = dict(fontsize=14, fontweight='bold',
+                          va='top', ha='left')
     bb_tree = ax_tree.get_position()
     bb_a1   = ax_a1.get_position()
     bb_mp   = ax_mp.get_position()
     label_x = bb_tree.x0
-    fig.text(label_x, bb_a1.y1,   '(a)', **panel_label_kw)
-    fig.text(label_x, bb_tree.y1, '(b)', **panel_label_kw)
-    fig.text(label_x, bb_mp.y1,   '(c)', **panel_label_kw)
+    fig.text(label_x, bb_a1.y1,   'a', **panel_label_kw)
+    fig.text(label_x, bb_tree.y1, 'b', **panel_label_kw)
+    fig.text(label_x, bb_mp.y1,   'c', **panel_label_kw)
 
     fig.savefig(args.out_pdf, bbox_inches='tight')
     print(f'Saved: {args.out_pdf}')
