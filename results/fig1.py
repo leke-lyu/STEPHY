@@ -1083,11 +1083,11 @@ def draw_dtw_outputs(ax, target_loc='a', other_loc='b'):
                        n_boxes=n_cells, box_w=cell_w, box_h=cell_h,
                        color=C_EDGE_FEAT)
 
-    # Line 1: edge_{b->a} feature (1x3) — subscript b->a in mathtext
-    # renders smaller and tucks against 'edge'.
+    # Line 1: e_{b->a} (1x3) — subscript b->a in mathtext renders
+    # smaller and tucks against 'e'.
     ax.text(0.5, cell_y - 0.10,
-            r'$\mathrm{edge}_{' + other_loc + r'\to '
-            + target_loc + r'}\,\mathrm{feature}\,(1 \times 3)$',
+            r'$e_{' + other_loc + r'\to ' + target_loc
+            + r'}\ (1 \times 3)$',
             ha='center', va='top',
             fontsize=6, color=C_EDGE_FEAT, style='italic')
 
@@ -1478,8 +1478,7 @@ def _draw_panel_b(fig, subplotspec, args):
                  ha='center', va='bottom',
                  fontsize=5, fontweight='bold', color='#555')
     ax_conv.text(nf_x0 + nf_n * nf_bw / 2, nf_y0 - 0.35,
-                 r'$\mathrm{node}_{' + args.target_loc
-                 + r'}\,\mathrm{feature}\,(1 \times 128)$',
+                 r'$h_{' + args.target_loc + r'}\ (1 \times 128)$',
                  ha='center', va='top',
                  fontsize=6, fontweight='bold', color=C_NODE_FEAT)
 
