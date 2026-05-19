@@ -210,7 +210,7 @@ def main():
         ax.grid(True, alpha=0.3)
         ax.set_title(TARGET_LABELS[target], fontsize=7, fontweight='bold')
         ax.text(-0.18, 1.04, chr(ord('a') + col), transform=ax.transAxes,
-                fontsize=9, fontweight='bold', va='bottom', ha='left')
+                fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     # -- Row 2 (e-h): R2/accuracy vs interval_width/set_size ----------------
     ROW2_XLIMS = {
@@ -246,7 +246,7 @@ def main():
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.18, 1.04, chr(ord('e') + col), transform=ax.transAxes,
-                fontsize=9, fontweight='bold', va='bottom', ha='left')
+                fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     # -- Shared legend ------------------------------------------------------
     legend_handles = [

@@ -252,7 +252,7 @@ def main():
     ax_a.legend(handles=pipeline_handles + style_handles,
                 loc='upper right', ncol=4, fontsize=6)
     ax_a.text(-0.04, 1.02, 'a', transform=ax_a.transAxes,
-              fontsize=9, fontweight='bold', va='bottom', ha='left')
+              fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     # -- Row 2 (b): R0 violins + gap violins --------------------------------
     ax_b = fig.add_subplot(gs[1, :])
@@ -287,7 +287,7 @@ def main():
     ax_b.grid(True, alpha=0.3)
     ax_b.set_axisbelow(True)
     ax_b.text(-0.04, 1.02, 'b', transform=ax_b.transAxes,
-              fontsize=9, fontweight='bold', va='bottom', ha='left')
+              fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     # -- Row 3 (c-f): per-task R2 / accuracy across population scales -------
     scale_x = np.arange(len(SCALES))
@@ -320,7 +320,7 @@ def main():
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.18, 1.04, chr(ord('c') + col), transform=ax.transAxes,
-                fontsize=9, fontweight='bold', va='bottom', ha='left')
+                fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
                ncol=len(PIPELINES), fontsize=6, bbox_to_anchor=(0.5, 0.04))
