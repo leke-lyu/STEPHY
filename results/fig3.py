@@ -54,9 +54,9 @@ PIPELINE_STYLE = {
 
 TARGETS = ['reg_r0', 'reg_rr', 'reg_sss', 'cls_as']
 TARGET_LABELS = {
-    'reg_r0':  'Reproduction Number (Reg.)',
-    'reg_rr':  'Recovery Rate (Reg.)',
-    'reg_sss': 'Source-Sink Score (Reg.)',
+    'reg_r0':  r'$R_e$ (Reg.)',
+    'reg_rr':  r'$\mu$ (Reg.)',
+    'reg_sss': 'SSS (Reg.)',
     'cls_as':  'Ancestral State (Cls.)',
 }
 IS_CLASSIFICATION = {

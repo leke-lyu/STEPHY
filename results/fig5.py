@@ -548,7 +548,7 @@ def main():
     # --- SSS / R0 bootstrap violin columns (2, 4) — share panel letter with
     #     the adjacent map (map+violin = one panel) ---
     violin_configs = [
-        (2, 'sss_ml', 'sss_boot', SSS_YLIM, 'Source-Sink Score'),
+        (2, 'sss_ml', 'sss_boot', SSS_YLIM, 'SSS'),
         (4, 'r0_ml',  'r0_boot',  R0_YLIM,  r'$R_e$'),
     ]
     n_rows = len(visual_order)
@@ -575,7 +575,7 @@ def main():
     cbar_ax = fig.add_axes([sss_map_pos.x0 + 0.005, cbar_y,
                             sss_map_pos.width - 0.01, 0.008])
     cbar = fig.colorbar(sm_sss, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label('Source-Sink Score', fontsize=6)
+    cbar.set_label('SSS', fontsize=6)
     cbar.set_ticks([-1, 0, 1])
     cbar.ax.tick_params(labelsize=5)
 
