@@ -5,7 +5,7 @@
 # Single (non-array) SLURM job, single-threaded by design — measures honest
 # per-core forward-pass latency over the full test set for each label.
 #
-# Usage: sbatch results/submit_bench_inference.sh \
+# Usage: bash results/submit_bench_inference.sh \
 #            [<graphs_dir>] [<model_dir>]
 #
 # Defaults to /projects/lau_projects/simu/100k_diverse_population_result.
@@ -17,8 +17,6 @@
 #SBATCH --mem=16G
 #SBATCH --time=12:00:00
 
-set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STEPHY_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -26,7 +24,7 @@ GRAPHS_DIR="${1:-/projects/lau_projects/simu/100k_diverse_population_result}"
 MODEL_DIR="${2:-${GRAPHS_DIR}/stephy}"
 LOG_DIR="${GRAPHS_DIR}/logs"
 
-if [ -z "${SLURM_JOB_ID:-}" ]; then
+if [ -z "$SLURM_JOB_ID" ]; then
     # --- Submission mode (called from login node) ---
     mkdir -p "$LOG_DIR"
     sbatch --output="${LOG_DIR}/bench_stephy_%j.out" \
