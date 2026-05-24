@@ -164,31 +164,35 @@ def build_model(label, label_dir, subtree_width):
 # ---------------- graph collection ----------------
 
 def collect_graphs(graphs_dir, test_triplets, n_warmup):
-    """Stream batch files; return (test_graphs, warmup_graphs).
+    """Stream batch files; return (test_records, warmup_graphs).
 
-    Graphs are kept as raw (g, meta) tuples; normalisation is applied
-    per-label inside the timing loop using a clone of the raw tensors,
-    so the original features are never mutated.
+    test_records is a list of (g, n_tips_total, sim_id_str) tuples, where
+    n_tips_total is the sum of per-location n_tips (5th aux feature) — the
+    total number of sampled tips in the original BEAST2 tree. Aux features
+    in g.ndata['aux'] are raw at this stage; normalisation is applied
+    out-of-place during timing, so reading them here is safe.
     """
     graphs_dir = Path(graphs_dir)
     batch_files = sorted(graphs_dir.glob('batch_*_graphs.pt'))
     if not batch_files:
         raise FileNotFoundError(f'No batch_*_graphs.pt in {graphs_dir}')
 
-    test_graphs, warmup_graphs = [], []
+    test_records, warmup_graphs = [], []
     print(f'Streaming {len(batch_files)} batch files ...', flush=True)
     for bf in batch_files:
         batch = torch.load(str(bf), weights_only=False)
         for g, meta, locs, height in batch:
             if meta_key(meta) in test_triplets:
-                test_graphs.append(g)
+                n_tips = int(g.ndata['aux'][:, 4].sum().item())
+                sim_id = f"{meta['batch']}/{meta['sim_id']}_{meta['tree_idx']}"
+                test_records.append((g, n_tips, sim_id))
             elif len(warmup_graphs) < n_warmup:
                 warmup_graphs.append(g)
         del batch
         gc.collect()
-    print(f'  collected: {len(test_graphs)} test, {len(warmup_graphs)} warmup',
+    print(f'  collected: {len(test_records)} test, {len(warmup_graphs)} warmup',
           flush=True)
-    return test_graphs, warmup_graphs
+    return test_records, warmup_graphs
 
 
 # ---------------- per-graph normalisation ----------------
@@ -210,7 +214,7 @@ def normed_features(g, aux_mean, aux_std, edge_mean, edge_std):
 
 # ---------------- per-label benchmark ----------------
 
-def bench_label(label, model_dir, test_graphs, warmup_graphs):
+def bench_label(label, model_dir, test_records, warmup_graphs):
     label_dir = Path(model_dir) / label
     norm_params = torch.load(str(label_dir / 'norm_params.pt'),
                              map_location='cpu', weights_only=False)
@@ -219,12 +223,12 @@ def bench_label(label, model_dir, test_graphs, warmup_graphs):
     edge_mean = norm_params['edge']['mean']
     edge_std = norm_params['edge']['std']
 
-    subtree_width = test_graphs[0].ndata['cblv'].shape[2]
+    subtree_width = test_records[0][0].ndata['cblv'].shape[2]
     model, out_dim = build_model(label, label_dir, subtree_width)
     n_params = count_parameters(model)
 
     latencies_ns = []
-    print(f'  {label}: warmup ({len(warmup_graphs)}) + time ({len(test_graphs)}) ...',
+    print(f'  {label}: warmup ({len(warmup_graphs)}) + time ({len(test_records)}) ...',
           flush=True)
 
     with torch.no_grad():
@@ -232,7 +236,7 @@ def bench_label(label, model_dir, test_graphs, warmup_graphs):
             cblv, aux, ef = normed_features(g, aux_mean, aux_std, edge_mean, edge_std)
             _ = model(g, cblv, aux, ef)
 
-        for g in test_graphs:
+        for g, _n_tips, _sim_id in test_records:
             cblv, aux, ef = normed_features(g, aux_mean, aux_std, edge_mean, edge_std)
             t0 = time.perf_counter_ns()
             _ = model(g, cblv, aux, ef)
@@ -244,6 +248,8 @@ def bench_label(label, model_dir, test_graphs, warmup_graphs):
         'n_params': n_params,
         'out_dim': out_dim,
         'latencies_ms': np.array(latencies_ns) / 1e6,
+        'n_tips': np.array([r[1] for r in test_records]),
+        'sim_ids': [r[2] for r in test_records],
     }
 
 
@@ -287,16 +293,16 @@ def main():
     print(f'  Warmup          : {args.n_warmup} non-test graphs per label (discarded)')
     print()
 
-    test_graphs, warmup_graphs = collect_graphs(
+    test_records, warmup_graphs = collect_graphs(
         args.graphs_dir, test_triplets, args.n_warmup)
-    if len(test_graphs) != len(test_triplets):
-        print(f'  WARNING: collected {len(test_graphs)} of '
+    if len(test_records) != len(test_triplets):
+        print(f'  WARNING: collected {len(test_records)} of '
               f'{len(test_triplets)} expected test graphs')
     if len(warmup_graphs) < args.n_warmup:
         print(f'  WARNING: only {len(warmup_graphs)}/{args.n_warmup} warmup graphs found')
 
     labels = [s.strip() for s in args.labels.split(',') if s.strip()]
-    results = [bench_label(label, args.model_dir, test_graphs, warmup_graphs)
+    results = [bench_label(label, args.model_dir, test_records, warmup_graphs)
                for label in labels]
 
     n_test = len(results[0]['latencies_ms'])
@@ -305,6 +311,26 @@ def main():
     print('  label         params    out_dim   mean ms     std    min    p50     max    total s    trees/s')
     for r in results:
         print(format_row(r))
+    print()
+
+    # Tree-size dependence: latency at the slowest and fastest tree, plus
+    # Pearson correlation with n_tips. Tree size shouldn't affect latency
+    # because the model input is fixed-shape (CBLV padded to subtree_width).
+    n_tips_all = results[0]['n_tips']
+    print(f'Tree-size dependence  (n_tips = total sampled tips per tree, range {n_tips_all.min()}-{n_tips_all.max()})')
+    print('  label        slowest tree                       fastest tree                       Pearson r')
+    print('               ms      n_tips   sim_id            ms      n_tips   sim_id            (latency vs n_tips)')
+    for r in results:
+        lat = r['latencies_ms']
+        tips = r['n_tips']
+        sids = r['sim_ids']
+        i_max = int(np.argmax(lat))
+        i_min = int(np.argmin(lat))
+        corr = float(np.corrcoef(lat, tips)[0, 1])
+        print(f"  {r['label']:<10}   "
+              f"{lat[i_max]:6.2f}  {tips[i_max]:6d}   {sids[i_max]:<16}  "
+              f"{lat[i_min]:6.2f}  {tips[i_min]:6d}   {sids[i_min]:<16}  "
+              f"r = {corr:+.3f}")
     print()
 
     all_lat = np.concatenate([r['latencies_ms'] for r in results])
