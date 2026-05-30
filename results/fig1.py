@@ -93,7 +93,7 @@ MIG_PAIRS = [
     ('b', 'd'),
 ]
 
-COMP_RADIUS = 0.60
+COMP_RADIUS = 0.75
 I_RADIUS    = 1.15
 
 # Engine font hierarchy. Sized for Nature print: ~5–8 pt at final
@@ -318,7 +318,7 @@ def draw_tree(ax):
         ax.plot(x, y, 'o', color=C_INF, markersize=MS_INF, zorder=3,
                 markeredgecolor='white', markeredgewidth=0.4)
         loc = NODE_LOCATIONS[label]
-        ax.text(x + 0.24, y, f'Loc {loc}', fontsize=FS_EVENT_TAG,
+        ax.text(x + 0.24, y, loc, fontsize=FS_EVENT_TAG,
                 fontweight='bold', style='italic',
                 color=C_INF, ha='left', va='center', zorder=4)
 
@@ -333,7 +333,7 @@ def draw_tree(ax):
                     markeredgecolor='white', markeredgewidth=0.4)
             label_color = C_REM
         loc = TIP_LOCATIONS[i]
-        ax.text(x + 0.26, y, f'Loc {loc}', fontsize=FS_EVENT_TAG,
+        ax.text(x + 0.26, y, loc, fontsize=FS_EVENT_TAG,
                 fontweight='bold', style='italic',
                 color=label_color, ha='left', va='center', zorder=4)
 
@@ -343,14 +343,14 @@ def draw_tree(ax):
         ax.plot(mx, my, marker='D', color=C_MIG, markersize=MS_MIG,
                 zorder=3, markeredgecolor='white', markeredgewidth=0.4)
         ax.text(mx, my + 0.48,
-                f'Loc {from_loc} $\\rightarrow$ Loc {to_loc}',
+                f'{from_loc} $\\rightarrow$ {to_loc}',
                 fontsize=FS_MIG_TAG, fontweight='bold', style='italic',
                 color=C_MIG, ha='center', va='bottom', zorder=4)
 
     ax.plot(SEED_X_T12, root_y, marker='*', markersize=MS_INDEX,
             color='#FFC107', markeredgecolor='#8A6500',
             markeredgewidth=0.4, zorder=3)
-    ax.text(SEED_X_T12, root_y + 0.65, 'index case',
+    ax.text(SEED_X_T12, root_y + 0.65, 'source case',
             ha='center', va='bottom',
             fontsize=FS_T12_INDEX_CAP, fontweight='bold', style='italic',
             color='#8A6500')
@@ -1172,7 +1172,7 @@ def _draw_panel_a(fig, subplotspec):
     # Top caption: Loc_a is the seed (centered above the diamond).
     # Caption sits to the right of I_a, single line, at I_a's
     # vertical height (y=5). Bubble a ends at x=2.1 so x=2.5 clears it.
-    ax_a1.text(2.5, 5.0, 'Loc$_a$, the index case',
+    ax_a1.text(2.5, 5.0, 'Loc$_a$, the source of the outbreak',
                ha='left', va='center', clip_on=False,
                fontsize=FS_PANEL_A_QUES, fontweight='bold', style='italic',
                color='#8A6500')
@@ -1182,9 +1182,9 @@ def _draw_panel_a(fig, subplotspec):
     # lower-right empty corner of the engine cell (below bubble b).
     legend_handles = [
         Line2D([0], [0], color='#2E7DBF', lw=1.2, label='infection'),
-        Line2D([0], [0], color='#888888', lw=1.2, label='removal'),
-        Line2D([0], [0], color='#3CB371', lw=1.2, label='sampling'),
         Line2D([0], [0], color='#7B4FB4', lw=1.4, label='migration'),
+        Line2D([0], [0], color='#888888', lw=1.2, label='recovery'),
+        Line2D([0], [0], color='#3CB371', lw=1.2, label='sampling'),
     ]
     ax_a1.legend(handles=legend_handles, loc='lower right',
                  frameon=False, fontsize=FS_EVENT,
@@ -1269,7 +1269,7 @@ def _draw_panel_b(fig, subplotspec, args):
     ax_tree.plot(SEED_X, root.y, marker='*', markersize=10,
                  color=C_GOLD, markeredgecolor=C_GOLD_DARK,
                  markeredgewidth=0.5, zorder=6)
-    ax_tree.text(SEED_X, root.y + 1.7, 'index case',
+    ax_tree.text(SEED_X, root.y + 1.7, 'source case',
                  ha='center', va='bottom',
                  fontsize=FS_INDEX_CAP, fontweight='bold', style='italic',
                  color=C_GOLD_DARK)
@@ -1667,9 +1667,9 @@ def _draw_pred_card(ax, x_center, y_center, loc, is_target):
     val_gap = 0.08   # gap (in data units) between value and interval
     sign = '+' if p['SSS'] > 0 else '−'
     rows = [
-        (row_ys[0], fr'$R_e\!=\!{p["R_e"]:.2f}$',
+        (row_ys[0], fr'$R_0\!=\!{p["R_e"]:.2f}$',
          fr'$[{p["R_e_lo"]:.2f},\,{p["R_e_hi"]:.2f}]$'),
-        (row_ys[1], fr'$\mu\!=\!{p["mu"]:.3f}$',
+        (row_ys[1], fr'$\gamma\!=\!{p["mu"]:.3f}$',
          fr'$[{p["mu_lo"]:.3f},\,{p["mu_hi"]:.3f}]$'),
         (row_ys[2], fr'$\mathrm{{SSS}}\!=\!{sign}{abs(p["SSS"]):.2f}$',
          fr'$[{p["SSS_lo"]:+.2f},\,{p["SSS_hi"]:+.2f}]$'),
@@ -2114,7 +2114,7 @@ def _draw_panel_f_predictions(ax):
             clip_on=False)
     cp_set_str = ', '.join(f'Loc$_{{{l}}}$' for l in PANEL_F_PRED_CP_SET)
     ax.text(star_x + 0.45, star_y,
-            f'index case: Loc$_{{{PANEL_F_PRED_INDEX}}}$  '
+            f'source case: Loc$_{{{PANEL_F_PRED_INDEX}}}$  '
             f'[{cp_set_str}]',
             ha='left', va='center',
             fontsize=FS_PANEL_A_QUES, fontweight='bold', style='italic',
