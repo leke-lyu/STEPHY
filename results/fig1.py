@@ -12,7 +12,7 @@ Panel (b) — STEPHY ENCODER PIPELINE (2x2 GRID)
     Top-left:  subtree extraction — full simulated tree with Loc_a's
                virtual subtree highlighted in red, neighbouring clade
                collapsed into a dashed grey triangle.
-    Top-right: per-node encoder — CBLV (M x 4) -> 3-branch CNN (plain /
+    Top-right: per-node encoder — CBLV (W x 4) -> 3-branch CNN (plain /
                stride / dilate) -> (1 x 96), plus Aux (1 x 5) ->
                AuxBranch MLP -> (1 x 32), concat -> (1 x 128) node
                feature.
@@ -882,7 +882,7 @@ def draw_cblv_grid(ax, x0, y0, width, height,
                    cmap_name='viridis', pad_facecolor='#e6e6e6',
                    pad_text_color='#888',
                    seed=7, border_color='#333', border_lw=1.2):
-    """Stylized CBLV (M x 4) heatmap."""
+    """Stylized CBLV (W x 4) heatmap."""
     cmap = plt.get_cmap(cmap_name)
     rng = np.random.default_rng(seed)
     values = rng.random((n_rows, n_cols))
@@ -1325,7 +1325,7 @@ def _draw_panel_b(fig, subplotspec, args):
 
     CELL = 0.42
 
-    # CBLV (M x 4)
+    # CBLV (W x 4)
     cblv_rows, cblv_cols = 12, 4
     cblv_n_filled = 10
     cblv_w = cblv_cols * CELL
@@ -1349,7 +1349,7 @@ def _draw_panel_b(fig, subplotspec, args):
         color='#444', lw=1.4, solid_capstyle='butt',
     )
     ax_conv.text(bracket_x + bracket_tip + 0.08,
-                 (y_top + y_split) / 2, 'N',
+                 (y_top + y_split) / 2, 'm',
                  ha='left', va='center',
                  fontsize=6, fontweight='bold', color='#222')
     ax_conv.plot(
@@ -1360,18 +1360,18 @@ def _draw_panel_b(fig, subplotspec, args):
     )
     ax_conv.text(bracket_x + bracket_tip + 0.08,
                  (y_split + y_bottom) / 2,
-                 r'$M\!-\!N$' + '\nzero pad',
+                 r'$W\!-\!m$' + '\nzero pad',
                  ha='left', va='center',
                  fontsize=5, color='#666')
 
     ax_conv.text(cblv_x0 + cblv_w / 2, cblv_y0 - 0.30,
-                 r'CBLV $(M \times 4)$',
+                 r'CBLV $(W \times 4)$',
                  ha='center', va='top',
                  fontsize=6, fontweight='bold', color='#222')
     ax_conv.text(cblv_x0 + cblv_w / 2, cblv_y0 - 0.65,
-                 r'$M$ = fixed unified dimension;'
+                 r'$W$ = fixed unified dimension;'
                  ' \n'
-                 r'$N$ = subtree tips',
+                 r'$m$ = subtree tips',
                  ha='center', va='top',
                  fontsize=5, color='#666', style='italic')
 
