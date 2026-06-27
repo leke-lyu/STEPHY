@@ -8,8 +8,8 @@ Five-row x five-column grid, one row per Nextstrain clade
   Col 0:  Exploded ML timetree, branches colored by Danish division.
   Col 1:  ML Source-Sink Score choropleth.
   Col 2:  Bootstrap distribution of SSS per region (40 replicates) + ML star.
-  Col 3:  ML R_e choropleth.
-  Col 4:  Bootstrap distribution of R_e per region (40 replicates) + ML star.
+  Col 3:  ML R_0 choropleth.
+  Col 4:  Bootstrap distribution of R_0 per region (40 replicates) + ML star.
 
 Tree topology comes from stephy_input/<clade>/newick/ml.nwk; division and
 numdate are joined onto each node from the parent lineage's augur outputs
@@ -88,6 +88,7 @@ DIVISION_COLORS = {
     'Syddanmark':  '#9B59B6',
 }
 DEFAULT_COLOR = '#AAAAAA'
+BRANCH_COLOR = '#888888'   # tree branches: neutral grey; tips keep division color
 
 SSS_CMAP = LinearSegmentedColormap.from_list(
     'sss_diverging',
@@ -279,17 +280,23 @@ def load_regions(geojson_path):
 # Drawing
 # ---------------------------------------------------------------------------
 
-def draw_tree(ax, tree, y_offset, subtree_sizes):
+def draw_tree(ax, tree, y_offset, subtree_sizes, log_max):
     """Draw a single phylogeny via LineCollection.
 
-    Horizontal branches: thin, colored by division.
-    Vertical (joining) branches: log-scaled width by descendant count.
-    """
-    max_size = max(subtree_sizes.values())
-    log_max = np.log2(max(max_size, 2))
+    Horizontal branches: thin, neutral grey (BRANCH_COLOR).
+    Vertical (joining) branches: grey, log-scaled width by descendant count.
+    Tips: division-colored (the only color-coded element).
 
+    log_max is shared across all clades (log2 of the largest subclade in the
+    whole figure), so a subclade of N tips renders at the same width in every
+    tree and the widths are comparable across clades.
+    """
     def vert_lw(n):
-        return 0.2 + 0.8 * np.log2(max(n, 2)) / log_max
+        # log2(subclade tips) mapped to 0.05-1.0 pt on a GLOBAL scale shared by
+        # all 5 clades: a 2-tip cherry -> 0.05 pt, the largest subclade in the
+        # figure -> 1.0 pt, linear in log2 between.
+        frac = (np.log2(max(n, 2)) - 1) / (log_max - 1) if log_max > 1 else 0.0
+        return 0.05 + 0.95 * frac
 
     h_segments, h_colors = [], []
     v_by_lw = {}
@@ -297,7 +304,7 @@ def draw_tree(ax, tree, y_offset, subtree_sizes):
     for k in tree.Objects:
         if k.absoluteTime is None:
             continue
-        c = division_color(k)
+        c = BRANCH_COLOR
         x_node = mdates.date2num(decimal_to_datetime(k.absoluteTime))
         if (k.parent and k.parent != 'Root'
                 and getattr(k.parent, 'absoluteTime', None) is not None):
@@ -337,7 +344,8 @@ def draw_tree(ax, tree, y_offset, subtree_sizes):
         tips_by_color[c][1].append(k.y + y_offset)
 
     for c, (xs, ys) in tips_by_color.items():
-        ax.scatter(xs, ys, s=TIP_SIZE, color=c, zorder=100, linewidths=0)
+        ax.scatter(xs, ys, s=TIP_SIZE, color=c, zorder=100, linewidths=0,
+                   alpha=0.6)
 
 
 def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
@@ -417,7 +425,7 @@ def draw_choropleth(ax, gdf, values, label, norm, cmap):
 # ---------------------------------------------------------------------------
 
 def main():
-    """Build fig5.pdf — 5-clade trees + ML SSS / R_e choropleths + bootstrap violins.
+    """Build fig5.pdf — 5-clade trees + ML SSS / R_0 choropleths + bootstrap violins.
 
     Loads each clade's ML tree (decorated with division + numdate from the
     parent lineage's augur outputs), reads ML and bootstrap predictions from
@@ -488,13 +496,18 @@ def main():
 
     # --- Left: stacked trees ---
     ax_tree = fig.add_subplot(gs[:, 0])
+    # Global vertical-width scale: largest subclade across ALL clades maps to
+    # 2.0 pt, so branch widths are comparable between trees (a 7k-tip stem in
+    # 21K reads thicker than the 571-tip 21I stem).
+    global_max = max(max(sizes.values()) for _, _, _, sizes, _ in loaded)
+    log_max = np.log2(max(global_max, 2))
     cumulative_y = 0
     # Omicron clades emerge late in time → root_x sits near the right edge of
     # the tree column. Left-shift their labels so the text doesn't extend past
     # the column into the SSS panels.
     LABEL_X_SHIFT_DAYS = {'21K': 90, '21L': 90}
     for tree, label, n_tips, sizes, clade in loaded:
-        draw_tree(ax_tree, tree, cumulative_y, sizes)
+        draw_tree(ax_tree, tree, cumulative_y, sizes, log_max)
         root_x = decimal_to_datetime(tree.root.absoluteTime)
         label_x = root_x - timedelta(days=LABEL_X_SHIFT_DAYS.get(clade, 0))
         ax_tree.text(
@@ -549,7 +562,7 @@ def main():
     #     the adjacent map (map+violin = one panel) ---
     violin_configs = [
         (2, 'sss_ml', 'sss_boot', SSS_YLIM, 'SSS'),
-        (4, 'r0_ml',  'r0_boot',  R0_YLIM,  r'$R_e$'),
+        (4, 'r0_ml',  'r0_boot',  R0_YLIM,  r'$R_0$'),
     ]
     n_rows = len(visual_order)
     for col, ml_key, boot_key, ylim, ylabel in violin_configs:
@@ -583,7 +596,7 @@ def main():
     cbar_ax = fig.add_axes([r0_map_pos.x0 + 0.005, cbar_y,
                             r0_map_pos.width - 0.01, 0.008])
     cbar = fig.colorbar(sm_r0, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label(r'$R_e$', fontsize=6)
+    cbar.set_label(r'$R_0$', fontsize=6)
     cbar.set_ticks([0.8, 2.0, 3.0])
     cbar.ax.tick_params(labelsize=5)
 
