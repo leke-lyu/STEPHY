@@ -601,9 +601,12 @@ def main():
     cbar.ax.tick_params(labelsize=5)
 
     out = out_dir / 'fig5.pdf'
+    out_png = out_dir / 'fig5.png'
     fig.savefig(out, bbox_inches='tight')
+    fig.savefig(out_png, bbox_inches='tight', dpi=600)
     plt.close()
     print(f'Saved: {out}')
+    print(f'Saved: {out_png}')
 
 
 if __name__ == '__main__':

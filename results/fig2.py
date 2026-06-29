@@ -45,15 +45,20 @@ PIPELINE_STYLE = {
     'CBLV-CNN': ('#5B7E9E', 'o'),   # steel-blue circle
     'stephy':   ('#7A6FAC', 'D'),   # purple diamond
 }
+# Display labels (keys stay lowercase to match directory paths)
+PIPELINE_LABELS = {
+    'CBLV-CNN': 'CBLV-CNN',
+    'stephy':   'STEPHY',
+}
 
 # -- Targets -----------------------------------------------------------------
 
 TARGETS = ['reg_r0', 'reg_rr', 'reg_sss', 'cls_as']
 TARGET_LABELS = {
-    'reg_r0':  r'$R_e$ (Reg.)',
-    'reg_rr':  r'$\mu$ (Reg.)',
+    'reg_r0':  r'$R_0$ (Reg.)',
+    'reg_rr':  r'$\gamma$ (Reg.)',
     'reg_sss': 'SSS (Reg.)',
-    'cls_as':  'Ancestral State (Cls.)',
+    'cls_as':  'Index Location (Cls.)',
 }
 TARGET_COLORS = {
     'reg_r0':  '#4878A8',
@@ -233,7 +238,7 @@ def main():
             x_val = cp['mean_set_size'] if is_cls else cp['mean_interval_width']
             ax.scatter(x_val, score, color=color, marker=marker,
                        s=30, edgecolors='white', linewidths=0.4, zorder=3)
-            ax.annotate(pipeline, (x_val, score), textcoords='offset points',
+            ax.annotate(PIPELINE_LABELS[pipeline], (x_val, score), textcoords='offset points',
                         xytext=(4, -3), fontsize=5, color=color)
 
         ax.set_xlim(ROW2_XLIMS[target])
@@ -250,7 +255,7 @@ def main():
 
     # -- Shared legend ------------------------------------------------------
     legend_handles = [
-        Line2D([0], [0], marker=PIPELINE_STYLE[p][1], color='w', label=p,
+        Line2D([0], [0], marker=PIPELINE_STYLE[p][1], color='w', label=PIPELINE_LABELS[p],
                markerfacecolor=PIPELINE_STYLE[p][0], markeredgecolor='white',
                markeredgewidth=0.4, markersize=5)
         for p in PIPELINES
@@ -258,9 +263,13 @@ def main():
     fig.legend(handles=legend_handles, loc='lower center', frameon=False,
                ncol=len(PIPELINES), fontsize=6, bbox_to_anchor=(0.5, -0.02))
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig2.pdf')
-    fig.savefig(out_path, bbox_inches='tight')
-    print(f'Saved: {out_path}')
+    out_dir = os.path.dirname(os.path.abspath(__file__))
+    out_pdf = os.path.join(out_dir, 'fig2.pdf')
+    out_png = os.path.join(out_dir, 'fig2.png')
+    fig.savefig(out_pdf, bbox_inches='tight')
+    fig.savefig(out_png, bbox_inches='tight', dpi=600)
+    print(f'Saved: {out_pdf}')
+    print(f'Saved: {out_png}')
     plt.close()
 
 

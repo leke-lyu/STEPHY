@@ -31,13 +31,13 @@ from matplotlib.colors import to_rgb
 plt.rcParams.update({
     'font.family':     'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size':       6,
-    'axes.labelsize':  6,
-    'axes.titlesize':  7,
+    'font.size':       8,
+    'axes.labelsize':  8,
+    'axes.titlesize':  9,
     'axes.linewidth':  0.4,
-    'xtick.labelsize': 6,
-    'ytick.labelsize': 6,
-    'legend.fontsize': 5,
+    'xtick.labelsize': 7,
+    'ytick.labelsize': 7,
+    'legend.fontsize': 6,
     'legend.frameon':  False,
     'figure.dpi':      150,
     'savefig.dpi':     300,
@@ -129,7 +129,7 @@ def add_month_labels(ax, week_starts):
         ax.axvline(x=pos - 0.5, color='gray', ls='--', alpha=0.3, lw=0.4)
         nxt = positions[idx + 1] if idx + 1 < len(positions) else len(week_starts)
         ax.text((pos + nxt) / 2, ax.get_ylim()[1] * 0.95, label,
-                fontsize=5, fontweight='bold', ha='center', va='top', color='gray')
+                fontsize=6, fontweight='bold', ha='center', va='top', color='gray')
 
 
 def plot_panel(ax, y_fn, w2021):
@@ -256,7 +256,7 @@ def main():
     print(f'Subsampled: {len(subsampled_ids):,} sequences')
 
     # ── Figure: 4 stacked rows + shared legend below ─────────────────
-    fig = plt.figure(figsize=(8.40, 10.6))
+    fig = plt.figure(figsize=(8.30, 10.6))
     gs = gridspec.GridSpec(4, 1, figure=fig, hspace=0.25)
 
     panel_labels = ['a', 'b', 'c', 'd']
@@ -281,11 +281,11 @@ def main():
         ax.set_xticks(tick_idx)
         if row == 3:
             ax.set_xticklabels([w2021.index[i] for i in tick_idx],
-                               rotation=45, ha='right', fontsize=5)
+                               rotation=45, ha='right', fontsize=6)
         else:
             ax.set_xticklabels([])
 
-        ax.set_ylabel(ylabel, fontsize=6)
+        ax.set_ylabel(ylabel, fontsize=8)
         if 'Proportion' in ylabel:
             ax.set_ylim(bottom=0)
         ax.grid(True, axis='y', alpha=0.2)
@@ -303,11 +303,14 @@ def main():
         for variant in VARIANTS for region in REGIONS
     ]
     fig.legend(handles=legend_handles, loc='lower center', frameon=False,
-               ncol=5, fontsize=5, bbox_to_anchor=(0.5, 0.01))
+               ncol=5, fontsize=6, bbox_to_anchor=(0.5, 0.01))
 
-    out_path = out_dir / 'fig4.pdf'
-    fig.savefig(out_path, bbox_inches='tight')
-    print(f'Saved: {out_path}')
+    out_pdf = out_dir / 'fig4.pdf'
+    out_png = out_dir / 'fig4.png'
+    fig.savefig(out_pdf, bbox_inches='tight')
+    fig.savefig(out_png, bbox_inches='tight', dpi=600)
+    print(f'Saved: {out_pdf}')
+    print(f'Saved: {out_png}')
     plt.close()
 
 

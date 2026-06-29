@@ -30,12 +30,12 @@ from sklearn.metrics import r2_score
 plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'font.size': 6,
-    'axes.labelsize': 6,
-    'axes.titlesize': 7,
-    'xtick.labelsize': 5,
-    'ytick.labelsize': 5,
-    'legend.fontsize': 6,
+    'font.size': 8,
+    'axes.labelsize': 8,
+    'axes.titlesize': 9,
+    'xtick.labelsize': 7,
+    'ytick.labelsize': 7,
+    'legend.fontsize': 7,
     'figure.dpi': 150,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -49,15 +49,20 @@ PIPELINE_STYLE = {
     'CBLV-CNN': ('#5B7E9E', 'o'),   # steel-blue circle
     'stephy':   ('#7A6FAC', 'D'),   # purple diamond
 }
+# Display labels (keys stay lowercase to match directory paths)
+PIPELINE_LABELS = {
+    'CBLV-CNN': 'CBLV-CNN',
+    'stephy':   'STEPHY',
+}
 
 # -- Targets -----------------------------------------------------------------
 
 TARGETS = ['reg_r0', 'reg_rr', 'reg_sss', 'cls_as']
 TARGET_LABELS = {
-    'reg_r0':  r'$R_e$ (Reg.)',
-    'reg_rr':  r'$\mu$ (Reg.)',
+    'reg_r0':  r'$R_0$ (Reg.)',
+    'reg_rr':  r'$\gamma$ (Reg.)',
     'reg_sss': 'SSS (Reg.)',
-    'cls_as':  'Ancestral State (Cls.)',
+    'cls_as':  'Index Location (Cls.)',
 }
 IS_CLASSIFICATION = {
     'reg_r0': False, 'reg_rr': False,
@@ -147,7 +152,7 @@ def make_pipeline_handles():
     """Build legend handles for the two pipelines."""
     return [
         Line2D([0], [0], marker=PIPELINE_STYLE[p][1],
-               color=PIPELINE_STYLE[p][0], lw=1.2, label=p,
+               color=PIPELINE_STYLE[p][0], lw=1.2, label=PIPELINE_LABELS[p],
                markerfacecolor=PIPELINE_STYLE[p][0],
                markeredgecolor='white', markeredgewidth=0.4, markersize=5)
         for p in PIPELINES
@@ -215,7 +220,7 @@ def main():
     scale_scores = load_scale_scores(gen_root)
 
     # -- Figure layout -------------------------------------------------------
-    fig = plt.figure(figsize=(8.57, 8.03))
+    fig = plt.figure(figsize=(8.45, 8.03))
     gs = gridspec.GridSpec(3, 4, figure=fig, height_ratios=[1, 1, 1],
                            hspace=0.35, wspace=0.35)
     pipeline_handles = make_pipeline_handles()
@@ -240,7 +245,7 @@ def main():
                   markeredgecolor='white', markeredgewidth=0.4)
         for xi, val in zip(x, miss1_accs[pipeline]):
             ax_a.annotate(f'{val:.0%}', (xi, val), textcoords='offset points',
-                          xytext=(0, 6), ha='center', fontsize=5, color=color)
+                          xytext=(0, 6), ha='center', fontsize=6, color=color)
 
     ax_a.set_xlabel('Top-k')
     ax_a.set_ylabel('Accuracy')
@@ -250,7 +255,7 @@ def main():
     ax_a.grid(True, alpha=0.3)
     ax_a.set_axisbelow(True)
     ax_a.legend(handles=pipeline_handles + style_handles,
-                loc='upper right', ncol=4, fontsize=6)
+                loc='upper right', ncol=4, fontsize=7)
     ax_a.text(-0.04, 1.02, 'a', transform=ax_a.transAxes,
               fontsize=14, fontweight='bold', va='bottom', ha='left')
 
@@ -272,7 +277,7 @@ def main():
 
     for i, d in enumerate(gap_data):
         ax_b.text(gap_x[i], 1.05, f'{np.median(d):.2f}', ha='center',
-                  va='bottom', fontsize=5, color=GAP_COLOR, fontweight='bold')
+                  va='bottom', fontsize=6, color=GAP_COLOR, fontweight='bold')
 
     ax_b.axhline(1.7, color='#cccccc', linewidth=0.6, linestyle=':', zorder=1)
     ax_b.legend(handles=[
@@ -307,27 +312,31 @@ def main():
                 if v is None:
                     continue
                 ax.annotate(f'{v:.2f}', (xi, v), textcoords='offset points',
-                            xytext=(0, 5), ha='center', fontsize=5, color=color)
+                            xytext=(0, 5), ha='center', fontsize=6, color=color)
 
         ax.set_xticks(scale_x)
         ax.set_xticklabels(SCALES)
         ax.set_xlim(-0.3, len(SCALES) - 0.7)
         ax.set_ylim(0.5, 1.0)
         ax.set_box_aspect(1)
-        ax.set_xlabel('Population scale', fontsize=6)
-        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=6)
-        ax.set_title(TARGET_LABELS[target], fontsize=7, fontweight='bold')
+        ax.set_xlabel('Population scale', fontsize=8)
+        ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=8)
+        ax.set_title(TARGET_LABELS[target], fontsize=9, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_axisbelow(True)
         ax.text(-0.18, 1.04, chr(ord('c') + col), transform=ax.transAxes,
                 fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=6, bbox_to_anchor=(0.5, 0.04))
+               ncol=len(PIPELINES), fontsize=7, bbox_to_anchor=(0.5, 0.04))
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig3.pdf')
-    fig.savefig(out_path, bbox_inches='tight')
-    print(f'Saved: {out_path}')
+    out_dir = os.path.dirname(os.path.abspath(__file__))
+    out_pdf = os.path.join(out_dir, 'fig3.pdf')
+    out_png = os.path.join(out_dir, 'fig3.png')
+    fig.savefig(out_pdf, bbox_inches='tight')
+    fig.savefig(out_png, bbox_inches='tight', dpi=600)
+    print(f'Saved: {out_pdf}')
+    print(f'Saved: {out_png}')
     plt.close()
 
 

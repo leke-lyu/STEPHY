@@ -2232,6 +2232,10 @@ def main():
     fig.savefig(args.out_pdf, bbox_inches='tight')
     print(f'Saved: {args.out_pdf}')
 
+    out_png = os.path.splitext(args.out_pdf)[0] + '.png'
+    fig.savefig(out_png, bbox_inches='tight', dpi=600)
+    print(f'Saved: {out_png}')
+
 
 if __name__ == '__main__':
     main()
