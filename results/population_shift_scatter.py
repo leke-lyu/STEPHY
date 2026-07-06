@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Population-shift scatter (3 x 4) — stephy diagnostics across X1/X2/X3.
+Population-shift scatter (3 x 4) — per-pipeline diagnostics across X1/X2/X3.
 
 Mirrors fig1 Row 1 (true-vs-pred scatter for regression, per-state accuracy
 for classification), but extended to three rows — one per population scale —
-so visual degradation under population shift is directly comparable.
+so visual degradation under population shift is directly comparable. One
+figure is produced per pipeline (STEPHY and CBLV-CNN).
 
   Rows:    X1 (1x), X2 (2x), X3 (3x) population scale
   Cols:    reg_r0, reg_rr, reg_sss, cls_as
-  Source:  {gen_root}/5k_diverse_population_{X}_result/stephy/{label}/test_predictions.csv
+  Source:  {gen_root}/5k_diverse_population_{X}_result/{pipeline}/{label}/test_predictions.csv
+  Output:  population_shift_scatter_{stephy,cblv-cnn}.{pdf,png}
 
 Usage:
     python3 population_shift_scatter.py
@@ -83,6 +85,9 @@ SCALE_LABELS = {'X1': '1x population',
                 'X3': '3x population'}
 SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
 
+# Pipelines to render (subdir name -> output-filename suffix)
+PIPELINES = ['stephy', 'CBLV-CNN']
+
 
 # -- Helpers (mirrors fig1.py) ----------------------------------------------
 
@@ -150,22 +155,8 @@ def plot_classification(ax, true_vals, pred_vals, target):
 
 # -- Main --------------------------------------------------------------------
 
-def main():
-    """
-    Build the population-shift scatter grid (3 x 4) for stephy.
-
-    Each row is a population scale (X1/X2/X3), each column is a task
-    (reg_r0, reg_rr, reg_sss, cls_as). Regression panels show true-vs-pred
-    scatter; the classification panel shows per-state accuracy. Output:
-    population_shift_scatter.pdf alongside this script.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--gen_root', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu',
-                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
-    args = parser.parse_args()
-    gen_root = args.gen_root
-
+def build_figure(gen_root, pipeline):
+    """Build the 3 x 4 population-shift scatter grid for one pipeline."""
     n_cols = len(TARGETS)
     n_rows = len(SCALES)
     fig = plt.figure(figsize=(2.1 * n_cols, 2.1 * n_rows))
@@ -173,11 +164,11 @@ def main():
 
     panel_idx = 0
     for row, scale in enumerate(SCALES):
-        stephy_dir = os.path.join(gen_root, SCALE_DIR_TPL.format(scale=scale),
-                                  'stephy')
+        pipeline_dir = os.path.join(gen_root, SCALE_DIR_TPL.format(scale=scale),
+                                    pipeline)
         for col, target in enumerate(TARGETS):
             ax = fig.add_subplot(gs[row, col])
-            true_vals, pred_vals = load_predictions(target, stephy_dir)
+            true_vals, pred_vals = load_predictions(target, pipeline_dir)
 
             if true_vals is None:
                 ax.text(0.5, 0.5, 'No data', ha='center', va='center',
@@ -203,11 +194,36 @@ def main():
                     va='bottom', ha='left')
             panel_idx += 1
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            'population_shift_scatter.pdf')
-    fig.savefig(out_path, bbox_inches='tight')
-    print(f'Saved: {out_path}')
-    plt.close()
+    return fig
+
+
+def main():
+    """
+    Build the population-shift scatter grid (3 x 4) for each pipeline.
+
+    Each row is a population scale (X1/X2/X3), each column is a task
+    (reg_r0, reg_rr, reg_sss, cls_as). Regression panels show true-vs-pred
+    scatter; the classification panel shows per-state accuracy. One figure
+    per pipeline is written next to this script as both PDF and PNG:
+    population_shift_scatter_{pipeline}.{pdf,png}.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gen_root', type=str,
+                        default='/Users/lukelyu/Desktop/trained_model/simu',
+                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
+    args = parser.parse_args()
+
+    out_dir = os.path.dirname(os.path.abspath(__file__))
+    for pipeline in PIPELINES:
+        fig = build_figure(args.gen_root, pipeline)
+        suffix = pipeline.lower()
+        out_pdf = os.path.join(out_dir, f'population_shift_scatter_{suffix}.pdf')
+        out_png = os.path.join(out_dir, f'population_shift_scatter_{suffix}.png')
+        fig.savefig(out_pdf, bbox_inches='tight')
+        fig.savefig(out_png, bbox_inches='tight', dpi=600)
+        print(f'Saved: {out_pdf}')
+        print(f'Saved: {out_png}')
+        plt.close(fig)
 
 
 if __name__ == '__main__':
