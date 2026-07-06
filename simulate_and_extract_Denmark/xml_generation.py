@@ -56,10 +56,10 @@ CONFIG = {
     'R0_distribution': get_required_env('R0_DISTRIBUTION'),
     'R0_alpha': float(get_required_env('R0_ALPHA')),
     'R0_beta': float(get_required_env('R0_BETA')),
-    'mu_range': (float(get_required_env('MU_MIN')), float(get_required_env('MU_MAX'))),
-    'shared_recovery_rate': str_to_bool(get_required_env('SHARED_RECOVERY_RATE')),
-    'max_mu_diff': float(get_required_env('MAX_MU_DIFF')),
-    'sample_range': (float(get_required_env('SAMPLE_MIN')), float(get_required_env('SAMPLE_MAX'))),
+    'gamma_range': (float(get_required_env('GAMMA_MIN')), float(get_required_env('GAMMA_MAX'))),
+    'shared_gamma': str_to_bool(get_required_env('SHARED_GAMMA')),
+    'max_gamma_diff': float(get_required_env('MAX_GAMMA_DIFF')),
+    'delta_range': (float(get_required_env('DELTA_MIN')), float(get_required_env('DELTA_MAX'))),
     'migration_range': (float(get_required_env('MIGRATION_MIN')), float(get_required_env('MIGRATION_MAX'))),
     'shared_migration_rate': str_to_bool(get_required_env('SHARED_MIGRATION_RATE')),
     'sim_time_range': (float(get_required_env('SIM_TIME_MIN')), float(get_required_env('SIM_TIME_MAX'))),
@@ -137,19 +137,19 @@ def R0_values(num_locs, R0_range, shared=False, max_diff=None,
 
     return R0_array
 
-def recovery_rate(num_locs, mu_range, shared=False, max_diff=None):
-    """Generate recovery rates (mu) for each location."""
+def recovery_rate(num_locs, gamma_range, shared=False, max_diff=None):
+    """Generate recovery rates (γ) for each location."""
     if shared:
-        single_mu = np.random.uniform(mu_range[0], mu_range[1])
-        mu_values = np.full(num_locs, single_mu)
+        single_gamma = np.random.uniform(gamma_range[0], gamma_range[1])
+        gamma_values = np.full(num_locs, single_gamma)
     else:
-        mu_values = generate_constrained_values(num_locs, mu_range, max_diff)
+        gamma_values = generate_constrained_values(num_locs, gamma_range, max_diff)
 
-    return mu_values
+    return gamma_values
 
-def sample_rate(sample_range):
+def sample_rate(delta_range):
     """Generate a single sampling rate shared across all locations."""
-    return np.random.uniform(sample_range[0], sample_range[1])
+    return np.random.uniform(delta_range[0], delta_range[1])
 
 def migration_rates(num_locs, migration_range, shared=False):
     """Generate migration rate matrix. Diagonal is 0 (no self-migration)."""
@@ -169,12 +169,12 @@ def migration_rates(num_locs, migration_range, shared=False):
 
     return migration_matrix
 
-def simulation_time(mu_values, sim_time_range, time_units='recovery_period'):
-    """Generate simulation time. Scales by 1/mean(mu) if time_units='recovery_period'."""
+def simulation_time(gamma_values, sim_time_range, time_units='recovery_period'):
+    """Generate simulation time. Scales by 1/mean(γ) if time_units='recovery_period'."""
     raw_sim_time = np.random.uniform(sim_time_range[0], sim_time_range[1])
 
     if time_units == 'recovery_period':
-        return raw_sim_time / np.mean(mu_values)
+        return raw_sim_time / np.mean(gamma_values)
     else:
         return raw_sim_time
 
@@ -182,7 +182,7 @@ def simulation_time(mu_values, sim_time_range, time_units='recovery_period'):
 # DATA EXPORT
 # ============================================================
 
-def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate_value,
+def save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values, delta_value,
                         beta_value, migration_rates_data, sim_time, output_file):
     """Save all generated epidemic parameters to a CSV file."""
     num_locs = len(pop_sizes)
@@ -204,11 +204,11 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate
         data[f'R0_loc_{i}'] = [r0]
 
     # Recovery rates
-    for i, mu in enumerate(mu_values):
-        data[f'recovery_rate_loc_{i}'] = [mu]
+    for i, gamma in enumerate(gamma_values):
+        data[f'recovery_rate_loc_{i}'] = [gamma]
 
     # Sample rate
-    data['sample_rate'] = [sample_rate_value]
+    data['sample_rate'] = [delta_value]
 
     # Transmission rates (beta)
     for i, beta in enumerate(beta_value):
@@ -230,7 +230,7 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values, sample_rate
 # XML GENERATION
 # ============================================================
 
-def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_value,
+def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_value,
                  migration_rates_data, sim_time, num_sims, ends_when, output_file):
     """Generate BEAST2/ReMaster XML configuration file with SIR reactions."""
     num_pops = len(pop_sizes)
@@ -253,11 +253,11 @@ def generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_valu
 
     # Recovery reactions
     for i in range(num_pops):
-        xml_lines.append(f'        <reaction spec="Reaction" rate="{mu_values[i]}"> I[{i}] -> R </reaction>')
+        xml_lines.append(f'        <reaction spec="Reaction" rate="{gamma_values[i]}"> I[{i}] -> R </reaction>')
 
     # Sampling reactions
     for i in range(num_pops):
-        xml_lines.append(f'        <reaction spec="Reaction" rate="{sample_rate_value}"> I[{i}] -> R + sample </reaction>')
+        xml_lines.append(f'        <reaction spec="Reaction" rate="{delta_value}"> I[{i}] -> R + sample </reaction>')
 
     # Migration reactions
     for i in range(num_pops):
@@ -309,14 +309,14 @@ def generate_parameters(config):
         alpha=config['R0_alpha'], beta_param=config['R0_beta'],
     )
 
-    mu_values = recovery_rate(
-        config['num_locs'], config['mu_range'],
-        config['shared_recovery_rate'], config['max_mu_diff'],
+    gamma_values = recovery_rate(
+        config['num_locs'], config['gamma_range'],
+        config['shared_gamma'], config['max_gamma_diff'],
     )
 
-    sample_rate_value = sample_rate(config['sample_range'])
+    delta_value = sample_rate(config['delta_range'])
 
-    beta_value = R0_array * (mu_values + sample_rate_value) / pop_sizes
+    beta_value = R0_array * (gamma_values + delta_value) / pop_sizes
 
     migration_rates_data = migration_rates(
         config['num_locs'], config['migration_range'],
@@ -324,11 +324,11 @@ def generate_parameters(config):
     )
 
     sim_time = simulation_time(
-        mu_values, config['sim_time_range'],
+        gamma_values, config['sim_time_range'],
         config['time_units'],
     )
 
-    return pop_sizes, seed_number, R0_array, mu_values, sample_rate_value, beta_value, migration_rates_data, sim_time
+    return pop_sizes, seed_number, R0_array, gamma_values, delta_value, beta_value, migration_rates_data, sim_time
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -339,14 +339,14 @@ if __name__ == "__main__":
     output_csv = sys.argv[2] if len(sys.argv) >= 3 else None
 
     # Generate parameters
-    pop_sizes, seed_number, R0_array, mu_values, sample_rate_value, beta_value, migration_rates_data, sim_time = generate_parameters(CONFIG)
+    pop_sizes, seed_number, R0_array, gamma_values, delta_value, beta_value, migration_rates_data, sim_time = generate_parameters(CONFIG)
 
     # Save CSV if requested
     if output_csv:
-        save_parameters_csv(pop_sizes, seed_number, R0_array, mu_values,
-                           sample_rate_value, beta_value, migration_rates_data,
+        save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values,
+                           delta_value, beta_value, migration_rates_data,
                            sim_time, output_csv)
 
     # Generate XML file
-    generate_xml(pop_sizes, seed_number, beta_value, mu_values, sample_rate_value,
+    generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_value,
                  migration_rates_data, sim_time, CONFIG['num_sims'], CONFIG['ends_when'], output_xml)

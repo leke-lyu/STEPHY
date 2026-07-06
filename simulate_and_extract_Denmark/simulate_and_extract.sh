@@ -46,15 +46,15 @@ R0_ALPHA=2                        # Beta shape α (only used when R0_DISTRIBUTIO
 R0_BETA=3.5                       # Beta shape β (only used when R0_DISTRIBUTION=beta)
                                   # Beta(2, 3.5) on [0.5, 4] → mode ≈ 1.5, mean ≈ 1.8
 
-# Recovery rate (mu, per day) — covers Alpha–Omicron infectious periods
-MU_MIN=0.07
-MU_MAX=0.23
-SHARED_RECOVERY_RATE=false
-MAX_MU_DIFF=0.01
+# Recovery rate (γ, per day) — covers Alpha–Omicron infectious periods
+GAMMA_MIN=0.07
+GAMMA_MAX=0.23
+SHARED_GAMMA=false
+MAX_GAMMA_DIFF=0.01
 
-# Sampling rate (per day, shared across all locations)
-SAMPLE_MIN=0.001
-SAMPLE_MAX=0.01
+# Sampling rate (δ, per day, shared across all locations)
+DELTA_MIN=0.001
+DELTA_MAX=0.01
 
 # Migration rate
 MIGRATION_MIN=0.001
@@ -88,8 +88,8 @@ MAX_ATTEMPTS_PER_OUTBREAK=50
 # Export configuration for xml_generation.py (reads via os.getenv())
 export NUM_LOCS FIXED_POP_SIZES SEED_LOCATION RANDOM_SEED TIME_UNITS NUM_SIMS
 export R0_MIN R0_MAX SHARED_R0 MAX_R0_DIFF R0_DISTRIBUTION R0_ALPHA R0_BETA
-export MU_MIN MU_MAX SHARED_RECOVERY_RATE MAX_MU_DIFF
-export SAMPLE_MIN SAMPLE_MAX
+export GAMMA_MIN GAMMA_MAX SHARED_GAMMA MAX_GAMMA_DIFF
+export DELTA_MIN DELTA_MAX
 export MIGRATION_MIN MIGRATION_MAX SHARED_MIGRATION_RATE
 export SIM_TIME_MIN SIM_TIME_MAX
 export ENDS_WHEN
