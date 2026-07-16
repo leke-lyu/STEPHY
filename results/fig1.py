@@ -1412,7 +1412,7 @@ def _draw_panel_b(fig, subplotspec, args):
                  ha='center', va='top',
                  fontsize=6, fontweight='bold', color='#222')
     ax_conv.text(aux_x0 + aux_n * aux_bw / 2, aux_y0 - 0.78,
-                 'mrca depth / earliest tip / latest tip / avg BL / n_tips',
+                 'mrca depth / earliest tip / latest tip / mean tip dist / n_tips',
                  ha='center', va='top',
                  fontsize=5, color='#666', style='italic')
 
@@ -1636,7 +1636,7 @@ C_INDEX_GLD = '#8A6500'   # matches panel-(a) question color
 # + MLP-head panel and per-location predictions panel.
 C_MLP         = "#F2A93B"
 C_MLP_EDGE    = "#7a5310"
-C_ALPHA       = "#3a1f6b"        # purple gather arrows (alpha_au)
+C_ALPHA       = "#3a1f6b"        # purple gather arrows (alpha_u->a)
 C_MSG_EDGE    = "#444"
 C_PLANE_TOP   = "#EDF1F6"        # K4-plate top face
 C_PLANE_FRONT = "#C9D1DC"        # K4-plate front (thickness)
@@ -1897,7 +1897,7 @@ def _draw_panel_f_mp(ax, args):
         ax.text(cx_e, cy_e, label, ha='center', va='center',
                 fontsize=8, color='#222', zorder=5)
     ax.text(agg_xy[0], agg_xy[1] - msg_h / 2 - 0.30,
-            r'$\sum_{u \neq a}\, \alpha_{au}\, h_{u}^{(\ell)}$',
+            r'$\sum_{u \neq a}\, \alpha_{u \to a}\, h_{u}^{(\ell)}$',
             ha='center', va='top',
             fontsize=6, color='#444', style='italic')
 
@@ -1905,7 +1905,7 @@ def _draw_panel_f_mp(ax, args):
     self_left = (self_xy[0] - msg_w / 2 - 0.02, self_xy[1])
 
     # Gather arrows from b, c, d -> agg_a. Solid purple line whose
-    # width encodes alpha_au (= incoming attention weight on edge
+    # width encodes alpha_u->a (= incoming attention weight on edge
     # u -> a).
     rad_for = {'b': -0.20, 'c': -0.04, 'd': -0.20}
     incoming_alpha = {l: eatt[(l, 'a')] for l in ('b', 'c', 'd')}

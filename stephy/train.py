@@ -243,7 +243,7 @@ def main():
                   if cal_graphs else f"{len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {split_info}")
     print(f"Features: CBLV(4ch) {config['data']['cblv_scale']}")
-    print(f"  Aux(mrca_depth, earliest_tip, latest_tip, avg_bl, n_tips) log+zscore")
+    print(f"  Aux(mrca_depth, earliest_tip, latest_tip, mean_mrca_tip_dist, n_tips) log+zscore")
     print(f"  Edge(dtw_dist, lag_mean, lag_std) ch0,2:log+zscore ch1:zscore")
     print(f"Label: {label_info}{cp_info}")
 

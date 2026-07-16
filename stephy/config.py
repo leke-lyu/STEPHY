@@ -48,7 +48,7 @@ MODEL_ARGS = {
     'phy_dilate_dilate': [3, 5],           # Dilation factors widen receptive field without pooling
 
     # Aux branch: MLP on 5 tree statistics (mrca_depth, earliest/latest tip
-    # times, avg branch length, n_tips). Kept small to avoid dominating CBLV.
+    # times, mean MRCA-to-tip distance, n_tips). Kept small to avoid dominating CBLV.
     'aux_hidden': 64,    # Hidden layer dimension
     'aux_output': 32,    # Output dimension (contributes 32 of the 128-dim node embedding)
 

@@ -95,7 +95,7 @@ class CBLVConvEncoder(nn.Module):
 
 
 class AuxBranch(nn.Module):
-    """MLP for auxiliary tree statistics (mrca_depth, tip times, avg_bl, n_tips).
+    """MLP for auxiliary tree statistics (mrca_depth, tip times, mean_mrca_tip_dist, n_tips).
 
     Input: (batch, 5)
     Output: (batch, aux_output)
