@@ -1,6 +1,11 @@
 tasks/
 __pycache__/
 *.pyc
-results/*.pdf
-results/*.out
 .DS_Store
+
+# Local-only — kept on disk, not published to GitHub.
+# The public repo carries just the model pipelines and simulation engines:
+# stephy/, CBLV-CNN/, simulate_and_extract/, simulate_and_extract_Denmark/.
+batch_run/
+CBLV-GAT/
+results/
