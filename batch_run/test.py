@@ -228,9 +228,11 @@ def apply_cqr(model, dataloader, label_name, pipeline, q_hat, label_norm):
 def apply_raps(model, dataloader, label_name, pipeline, q_hat, lambda_reg, k_reg):
     """Apply RAPS to produce per-graph prediction sets.
 
-    Walks softmax probs in descending order, accumulating regularized scores
-    until the calibration threshold `q_hat` is crossed. Pairs with
-    `stephy.conformal.apply_raps_test`.
+    Walks softmax probs in descending order until the score
+    `sum_{k=1..j} p_(k) + lambda_reg * max(j - k_reg, 0)` reaches the
+    calibration threshold `q_hat`. Must stay in lockstep with
+    `stephy.conformal.apply_raps_test` — calibration and application have to
+    use the identical score or the coverage guarantee breaks.
 
     Returns a dict with keys: true_classes, pred_classes, prediction_sets,
     set_sizes, covered.
@@ -252,12 +254,12 @@ def apply_raps(model, dataloader, label_name, pipeline, q_hat, lambda_reg, k_reg
                 sorted_probs, sorted_idx = torch.sort(p, descending=True)
 
                 pred_set = []
-                cumsum = 0.0
+                prob_sum = 0.0
                 for j in range(len(sorted_probs)):
-                    cumsum += sorted_probs[j].item()
-                    cumsum += lambda_reg * max(j + 1 - k_reg, 0)
+                    prob_sum += sorted_probs[j].item()
                     pred_set.append(sorted_idx[j].item())
-                    if cumsum >= q_hat:
+                    score = prob_sum + lambda_reg * max(j + 1 - k_reg, 0)
+                    if score >= q_hat:
                         break
 
                 all_true.append(true_cls)

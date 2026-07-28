@@ -200,6 +200,13 @@ def calibrate_raps(model, cal_loader, label_name, alpha, lambda_reg, k_reg,
                    forward_fn):
     """Compute RAPS calibration threshold on the calibration set.
 
+    Conformity score for a sample whose true class sits at rank r (1-indexed)
+    in the descending-probability ordering:
+
+        E = sum_{k=1..r} p_(k) + lambda_reg * max(r - k_reg, 0)
+
+    The penalty enters once, at the true class's rank.
+
     Args:
         model: trained classification model (outputs logits)
         cal_loader: DataLoader for calibration set
@@ -235,14 +242,14 @@ def calibrate_raps(model, cal_loader, label_name, alpha, lambda_reg, k_reg,
                 # Find rank of true class (0-indexed)
                 true_rank = (sorted_idx == true_cls).nonzero(as_tuple=True)[0].item()
 
-                # Compute RAPS score: cumulative prob up to and including true class
-                # plus regularization penalty for ranks beyond k_reg
-                cumsum = 0.0
-                for j in range(true_rank + 1):
-                    cumsum += sorted_probs[j].item()
-                    cumsum += lambda_reg * max(j + 1 - k_reg, 0)
+                # RAPS score: cumulative prob up to and including the true class,
+                # plus a single rank penalty keyed to the true class's rank.
+                # The penalty is applied once (not once per rank) so it grows
+                # linearly in rank, per Angelopoulos et al.
+                prob_sum = sorted_probs[:true_rank + 1].sum().item()
+                score = prob_sum + lambda_reg * max(true_rank + 1 - k_reg, 0)
 
-                all_scores.append(cumsum)
+                all_scores.append(score)
 
     cal_scores = np.array(all_scores)
     n = len(cal_scores)
@@ -256,6 +263,10 @@ def calibrate_raps(model, cal_loader, label_name, alpha, lambda_reg, k_reg,
 def apply_raps_test(model, test_loader, label_name, q_hat, lambda_reg, k_reg,
                     forward_fn):
     """Apply RAPS to test set to produce prediction sets.
+
+    Adds classes in descending probability order, stopping once the score
+    `sum_{k=1..j} p_(k) + lambda_reg * max(j - k_reg, 0)` reaches `q_hat` —
+    the same single-penalty form used in `calibrate_raps`.
 
     Args:
         model: trained classification model
@@ -291,14 +302,15 @@ def apply_raps_test(model, test_loader, label_name, q_hat, lambda_reg, k_reg,
 
                 sorted_probs, sorted_idx = torch.sort(p, descending=True)
 
-                # Build prediction set
+                # Build prediction set. The rank penalty is recomputed fresh at
+                # each rank rather than accumulated, mirroring calibration.
                 pred_set = []
-                cumsum = 0.0
+                prob_sum = 0.0
                 for j in range(len(sorted_probs)):
-                    cumsum += sorted_probs[j].item()
-                    cumsum += lambda_reg * max(j + 1 - k_reg, 0)
+                    prob_sum += sorted_probs[j].item()
                     pred_set.append(sorted_idx[j].item())
-                    if cumsum >= q_hat:
+                    score = prob_sum + lambda_reg * max(j + 1 - k_reg, 0)
+                    if score >= q_hat:
                         break
 
                 all_true.append(true_cls)
