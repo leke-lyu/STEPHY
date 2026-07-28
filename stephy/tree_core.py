@@ -152,7 +152,7 @@ class VirtualSubtreeEncoder:
 
         Returns: (heights, aux_stats)
             heights: (subtree_width, 4) CBLV matrix
-            aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, avg_branch_length, n_tips]
+            aux_stats: [mrca_depth, earliest_tip_time, latest_tip_time, mean_mrca_tip_dist, n_tips]
         """
         mrca = self._find_mrca(loc)
         n_tips = self.phy.seed_node.loc_counts.get(loc, 0)
