@@ -29,11 +29,11 @@ with MSE (pinball loss under conformal prediction), `cls_` with cross-entropy.
 | `reg_r0` | regression | per-location R₀ |
 | `reg_rr` | regression | per-location recovery rate γ |
 | `reg_sss` | regression | per-location source–sink score |
-| `cls_as` | classification | ancestral state — the location at the root of the sampled phylogeny |
+| `cls_as` | classification | index location — the location at the root of the sampled phylogeny |
 
-`cls_as` is the location annotated on the MRCA of all sampled tips, which is
-not necessarily where the outbreak was seeded — the simulation records that
-separately as `Spillover_Loc`. Two further labels, `cls_r0` and `cls_sss`
+`cls_as` is the location annotated on the MRCA of all sampled tips, used as the
+approximation for the seeding location and reported as the **index location**.
+Two further labels, `cls_r0` and `cls_sss`
 (argmax of the corresponding regression label), are also accepted; without
 `--labels`, `run_pipeline.sh` trains all six.
 
