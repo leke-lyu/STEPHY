@@ -15,9 +15,15 @@ prediction intervals or sets attached.
 | `CBLV-CNN/` | Ablation — CNN only, no graph structure; locations predicted independently. |
 | `simulate_and_extract/` | Simulation engines (12 locations) + shared extraction utilities. |
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
+| `supportingFigures/` | Figure, diagnostic and inference-benchmark scripts that read the trained-model output described below. |
 
 `run_pipeline.sh` also accepts `--pipeline CBLV-GAT`, a standard `GATConv`
 ablation that is not included here.
+
+Each script in `supportingFigures/` takes its input paths as `argparse`
+arguments whose defaults point at the author's local directories, so pass
+`--base_dir` (and the script's other path flags) to run them elsewhere. Only
+the scripts are versioned; the PDFs they render are not.
 
 ## Prediction targets
 
