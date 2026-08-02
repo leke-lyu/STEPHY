@@ -7,6 +7,11 @@ parameters off a phylogeny. Each location becomes a node encoding its own
 subtree; the model predicts that location's parameters, with conformal
 prediction intervals or sets attached.
 
+This repository supports the research paper *STEPHY: A Graph Neural Inference
+Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral
+Phylogenies*. The manuscript has not yet been submitted to a journal or posted
+as a preprint, so no link is available; this section will carry one once it is.
+
 ## Contents
 
 | Directory | Purpose |
@@ -15,7 +20,7 @@ prediction intervals or sets attached.
 | `CBLV-CNN/` | Ablation — CNN only, no graph structure; locations predicted independently. |
 | `simulate_and_extract/` | Simulation engines (12 locations) + shared extraction utilities. |
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
-| `supportingFigures/` | Figure, diagnostic and inference-benchmark scripts that read the trained-model output described below. |
+| `supportingFigures/` | Scripts that render the figures in the paper draft, plus the diagnostics and inference benchmarks behind them. They read the trained-model output described below. |
 
 `run_pipeline.sh` also accepts `--pipeline CBLV-GAT`, a standard `GATConv`
 ablation that is not included here.
