@@ -22,9 +22,6 @@ as a preprint, so no link is available; this section will carry one once it is.
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
 | `supportingFigures/` | Scripts that render the figures in the paper draft, plus the diagnostics and inference benchmarks behind them. They read the trained-model output described below. |
 
-`run_pipeline.sh` also accepts `--pipeline CBLV-GAT`, a standard `GATConv`
-ablation that is not included here.
-
 Each script in `supportingFigures/` takes its input paths as `argparse`
 arguments whose defaults point at the author's local directories, so pass
 `--base_dir` (and the script's other path flags) to run them elsewhere. Only
@@ -100,6 +97,9 @@ bash simulate_and_extract/submit.sh <engine_script> <num_batches> <sims_per_batc
 bash stephy/run_pipeline.sh <input_folder> [<input_folder> ...] <output_folder>
 bash stephy/run_pipeline.sh --pipeline CBLV-CNN --labels reg_r0,cls_as <input> <output>
 ```
+
+`run_pipeline.sh` also accepts `--pipeline CBLV-GAT`, a standard `GATConv`
+ablation that is not included here.
 
 Individual steps:
 
