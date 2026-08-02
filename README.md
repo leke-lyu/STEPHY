@@ -9,8 +9,7 @@ prediction intervals or sets attached.
 
 This repository supports the research paper *STEPHY: A Graph Neural Inference
 Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral
-Phylogenies*. The manuscript has not yet been submitted to a journal or posted
-as a preprint, so no link is available; this section will carry one once it is.
+Phylogenies*.
 
 ## Contents
 
@@ -20,12 +19,7 @@ as a preprint, so no link is available; this section will carry one once it is.
 | `CBLV-CNN/` | Ablation — CNN only, no graph structure; locations predicted independently. |
 | `simulate_and_extract/` | Simulation engines (12 locations) + shared extraction utilities. |
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
-| `supportingFigures/` | Scripts that render the figures in the paper draft, plus the diagnostics and inference benchmarks behind them. They read the trained-model output described below. |
-
-Each script in `supportingFigures/` takes its input paths as `argparse`
-arguments whose defaults point at the author's local directories, so pass
-`--base_dir` (and the script's other path flags) to run them elsewhere. Only
-the scripts are versioned; the PDFs they render are not.
+| `supportingFigures/` | Scripts that render the figures in the paper draft, plus the diagnostics and inference benchmarks behind them. |
 
 ## Prediction targets
 
