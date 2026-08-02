@@ -57,6 +57,30 @@ python3 stephy/train.py --graphs <out>/graphs.pt --num_locations 12 \
 `stephy`'s `graphs.pt` is the superset format, so `CBLV-CNN/train.py` consumes
 it directly and ignores the edges.
 
+## Simulation engines
+
+| | diverse population | Denmark |
+|---|---|---|
+| Locations | 12, populations 5k–50k | 5, fixed populations 590k–1.86M |
+| R₀ | Uniform [2, 8], ≤ 2 spread within an outbreak | Beta(2, 3.5) on [0.5, 4], ≤ 1 spread |
+| Recovery rate γ | [0.05, 0.25] | [0.07, 0.23] |
+| Sampling rate δ | [0.0002, 0.0028] | [0.001, 0.01] |
+| Migration rate | [0.0005, 0.0045] | [0.001, 0.012] |
+| Duration | 6–18 recovery periods | 20–240 time units |
+| Stops at | 5,000 samples | 8,000 samples |
+| Min tips/location | > 30 | > 30 |
+
+Besides the benchmark engine above, `simulate_and_extract/` carries
+`_similar_population.sh` (narrower populations, wider within-outbreak R₀
+spread) and `_X1/_X2/_X3.sh`, which scale populations ×1/×2/×3 while scaling
+the sampling rate δ inversely to hold tree size roughly constant.
+
+Either engine parallelises over SLURM:
+
+```bash
+bash simulate_and_extract/submit.sh <engine_script> <num_batches> <sims_per_batch> <base_dir>
+```
+
 ## Input data
 
 One pair of files per simulated outbreak:
@@ -69,7 +93,8 @@ One pair of files per simulated outbreak:
 The tip annotation `42[&type="I{3}",samp="sample",time=1.5]` reads as location
 3, a sampled tip, sampling time 1.5. Labels come from the `R0`,
 `Recovery_Rate`, `Source_Sink_Score` and `Ancestral_State` columns of the CSV,
-which carries further columns for downstream analysis.
+which carries further columns for downstream analysis. The engines also retain
+a `{id}_parameter.csv` of the drawn parameters, which the model does not read.
 
 ## Prediction targets
 
@@ -144,28 +169,6 @@ patience 25, seed 42. Early stopping tracks `val_loss` for regression and
 `location_idx, location_name` for regression), so rows join back to
 `{id}_nf.csv` and across labels.
 
-## Simulation engines
+## License
 
-| | diverse population | Denmark |
-|---|---|---|
-| Locations | 12, populations 5k–50k | 5, fixed populations 590k–1.86M |
-| R₀ | Uniform [2, 8], ≤ 2 spread within an outbreak | Beta(2, 3.5) on [0.5, 4], ≤ 1 spread |
-| Recovery rate γ | [0.05, 0.25] | [0.07, 0.23] |
-| Sampling rate δ | [0.0002, 0.0028] | [0.001, 0.01] |
-| Migration rate | [0.0005, 0.0045] | [0.001, 0.012] |
-| Duration | 6–18 recovery periods | 20–240 time units |
-| Stops at | 5,000 samples | 8,000 samples |
-| Min tips/location | > 30 | > 30 |
-
-Besides the benchmark engine above, `simulate_and_extract/` carries
-`_similar_population.sh` (narrower populations, wider within-outbreak R₀
-spread) and `_X1/_X2/_X3.sh`, which scale populations ×1/×2/×3 while scaling
-the sampling rate δ inversely to hold tree size roughly constant. Every engine
-also retains a `{id}_parameter.csv` of the drawn parameters, which the model
-does not read.
-
-Either engine parallelises over SLURM:
-
-```bash
-bash simulate_and_extract/submit.sh <engine_script> <num_batches> <sims_per_batch> <base_dir>
-```
+MIT — see [LICENSE](LICENSE).
