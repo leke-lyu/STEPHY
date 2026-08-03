@@ -259,9 +259,27 @@ def load_clade_predictions(base_dir, clade):
 
 
 def load_regions(geojson_path):
-    """Load Denmark regions GeoJSON, clipped to mainland (Bornholm excluded)."""
+    """Load Denmark regions GeoJSON, clipped to mainland (Bornholm excluded).
+
+    The boundary file spells one region with a Danish letter (Sjælland) where
+    the rest of the pipeline uses ASCII (Sjaelland), so names are normalised
+    through REGION_NAME_MAP. An unmatched name would otherwise survive to the
+    choropleth join and silently render that region blank, so the region set is
+    checked against the pipeline's here instead.
+    """
     gdf = gpd.read_file(geojson_path)
     gdf['region'] = gdf['NAME_1'].replace(REGION_NAME_MAP)
+
+    expected, found = set(REGIONS_BY_POP), set(gdf['region'])
+    if expected != found:
+        sys.exit(
+            f"Region names in {geojson_path} do not match the pipeline's.\n"
+            f"  missing   : {sorted(expected - found) or 'none'}\n"
+            f"  unexpected: {sorted(found - expected) or 'none'}\n"
+            "Add the needed entries to REGION_NAME_MAP. Boundary files vary in "
+            "how they spell Danish letters and whether they prefix names with "
+            "'Region'.")
+
     clip_box = box(7.5, 54.0, 12.65, 58.0)
     gdf = gdf.copy()
     gdf['geometry'] = gdf.geometry.intersection(clip_box)
@@ -411,6 +429,11 @@ def draw_choropleth(ax, gdf, values, label, norm, cmap):
     """Draw a Denmark choropleth map for one clade (no ancestor highlight)."""
     merged = gdf.copy()
     merged['val'] = merged['region'].map(values)
+    if merged['val'].isna().any():
+        blank = sorted(merged.loc[merged['val'].isna(), 'region'])
+        sys.exit(f"No {label} value for region(s): {blank}. "
+                 f"Available: {sorted(values)}. Left unfixed these regions "
+                 "would be drawn blank with no warning.")
     merged.plot(ax=ax, column='val', cmap=cmap, norm=norm,
                 edgecolor='#333333', linewidth=0.4)
 
@@ -465,6 +488,10 @@ def main():
     log = open(out_dir / 'fig5.out', 'w')
     sys.stdout = _Tee(sys.__stdout__, log)
 
+    # Validate the boundary file before the expensive tree loading, so a
+    # region-name mismatch surfaces in a second rather than after five trees.
+    gdf = load_regions(args.geojson)
+
     # --- Load trees ---
     loaded = []
     for clade in CLADES:
@@ -491,7 +518,6 @@ def main():
     sss_data = {lbl: d['sss_ml'] for lbl, d in clade_data.items()}
     r0_data = {lbl: d['r0_ml'] for lbl, d in clade_data.items()}
 
-    gdf = load_regions(args.geojson)
     sss_norm = TwoSlopeNorm(vcenter=0, vmin=-1, vmax=1)
     r0_norm = plt.Normalize(vmin=0.8, vmax=3.0)
 
