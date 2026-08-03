@@ -26,6 +26,8 @@ import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
 from matplotlib.colors import to_rgb
 
+from _paths import under
+
 
 # ── Publication defaults — unified font style across every figure script ───────────────
 plt.rcParams.update({
@@ -151,12 +153,11 @@ def main():
         description='fig4: Denmark 2021 weekly epidemic summary.')
     parser.add_argument(
         '--data_root', type=str,
-        default='/Users/lukelyu/Desktop/denmark_case/paper/'
-                'sars_cov2_290k_denmark-main',
+        default=under('denmark', 'paper', 'sars_cov2_290k_denmark-main'),
         help='Root of sars_cov2_290k_denmark-main (contains growth_rates/data/...).')
     parser.add_argument(
         '--gisaid_db', type=str,
-        default='/Users/lukelyu/Desktop/denmark_case/GISAID_db/metadata.db',
+        default=under('denmark', 'GISAID_db', 'metadata.db'),
         help='Path to the SQLite GISAID metadata DB.')
     args = parser.parse_args()
 

@@ -30,6 +30,8 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
+from _paths import under
+
 # ---------------------------------------------------------------------------
 # Shared font config — unified across every figure script
 # ---------------------------------------------------------------------------
@@ -96,8 +98,7 @@ class _Tee:
 
 
 def main():
-    default_root = ('/Users/lukelyu/Desktop/denmark_case/nextstrain/'
-                    'bootstrap_uncertainty')
+    default_root = under('denmark', 'nextstrain', 'bootstrap_uncertainty')
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--bootstrap_root', default=default_root,

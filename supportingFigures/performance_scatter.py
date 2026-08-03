@@ -29,6 +29,8 @@ import matplotlib.gridspec as gridspec
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 
+from _paths import under
+
 # -- Shared style (consistent with fig2.py / fig3.py) -----------------------
 
 plt.rcParams.update({
@@ -162,7 +164,7 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu/100k_diverse_population_result')
+                        default=under('models', 'simu', '100k_diverse_population_result'))
     parser.add_argument('--pipeline', type=str, default='CBLV-CNN',
                         help='Pipeline subdir to read predictions from '
                              '(e.g. stephy, CBLV-CNN)')

@@ -25,6 +25,8 @@ import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from sklearn.metrics import r2_score
 
+from _paths import under
+
 # -- Shared style (consistent with fig2.py) ---------------------------------
 
 plt.rcParams.update({
@@ -176,10 +178,10 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--result_dir', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu/100k_diverse_population_result',
+                        default=under('models', 'simu', '100k_diverse_population_result'),
                         help='100k result root containing {pipeline}/{label}/test_predictions.csv')
     parser.add_argument('--gen_root', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu',
+                        default=under('models', 'simu'),
                         help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
     result_dir = args.result_dir

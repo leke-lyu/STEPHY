@@ -29,6 +29,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 
+from _paths import under
+
 # -- Shared style (consistent with fig2.py / fig3.py) -----------------------
 
 plt.rcParams.update({
@@ -163,11 +165,10 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/denmark/'
-                                '100k_result/pe_old')
-    parser.add_argument('--pipeline', type=str, default='stephy2',
+                        default=under('models', 'denmark', '100k_result', 'pe_old'))
+    parser.add_argument('--pipeline', type=str, default='stephy',
                         help='Pipeline subdir to read predictions from '
-                             '(e.g. stephy2, CBLV-CNN2, CBLV-GAT2)')
+                             '(stephy, CBLV-CNN, CBLV-GAT)')
     args = parser.parse_args()
 
     pipeline_dir = os.path.join(args.base_dir, args.pipeline)

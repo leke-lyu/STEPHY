@@ -26,6 +26,8 @@ import matplotlib.gridspec as gridspec
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 
+from _paths import under
+
 # -- Shared style (consistent with fig1.py / fig2.py) -----------------------
 
 plt.rcParams.update({
@@ -209,7 +211,7 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--gen_root', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu',
+                        default=under('models', 'simu'),
                         help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
     args = parser.parse_args()
 

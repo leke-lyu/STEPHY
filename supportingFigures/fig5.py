@@ -43,6 +43,8 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
 from shapely.geometry import box, MultiPolygon
 
+from _paths import under
+
 # ---------------------------------------------------------------------------
 # Publication defaults (mirror denmark_old)
 # ---------------------------------------------------------------------------
@@ -435,15 +437,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--base_dir', type=str,
-        default='/Users/lukelyu/Desktop/denmark_case/nextstrain/'
-                'bootstrap_uncertainty',
+        default=under('denmark', 'nextstrain', 'bootstrap_uncertainty'),
         help='Root containing <Lineage>/ml_point_estimate/, stephy_input/, '
              'stephy_output/.')
     parser.add_argument(
         '--geojson', type=str,
-        default='/Users/lukelyu/Desktop/vault/denmark_old/figure/'
-                'gadm41_DNK_1.json',
-        help='GADM Denmark regions GeoJSON (reused from denmark_old).')
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'gadm41_DNK_1.json'),
+        help='GADM level-1 boundaries for Denmark. Not redistributed here; '
+             'download gadm41_DNK_1.json from https://gadm.org/download_country.html '
+             'and place it beside this script, or pass an explicit path.')
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)

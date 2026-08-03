@@ -1,0 +1,33 @@
+{
+  "title": "STEPHY trained models: simulation benchmarks and the Denmark application",
+  "upload_type": "dataset",
+  "description": "<p>Trained model weights, normalisation parameters, held-out test predictions and training histories for <em>STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral Phylogenies</em>.</p><p>Contains the simulation benchmarks (one main 100k-tree experiment, a similar-population-size experiment, and three 5k training-set-size replicates, each with a STEPHY model and a CBLV ablation) together with the heads trained for the Denmark SARS-CoV-2 application. These artefacts are required to regenerate the figures produced by <code>supportingFigures/</code> in the code repository; unpack the archive and set <code>STEPHY_MODELS</code> to the resulting directory.</p><p>SLURM logs, a superseded positional-encoding run, one ablation not reported for the Denmark application, and pre-bugfix backup files are excluded. See the README inside the archive for the directory map, task naming, and which head each paper uses.</p>",
+  "creators": [
+    {
+      "name": "Lyu, Leke"
+    }
+  ],
+  "license": "mit",
+  "access_right": "open",
+  "keywords": [
+    "phylodynamics",
+    "graph neural network",
+    "phylogenetics",
+    "SARS-CoV-2",
+    "epidemiological inference",
+    "trained models"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/leke-lyu/STEPHY",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://github.com/leke-lyu/stephy-denmark",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ],
+  "notes": "Unpack with: tar --use-compress-program=unzstd -xf stephy-trained-models.tar.zst"
+}

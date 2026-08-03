@@ -27,6 +27,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
+from _paths import under
+
 # -- Shared style (consistent with fig3.py) ---------------------------------
 
 plt.rcParams.update({
@@ -117,7 +119,7 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--result_dir', type=str,
-                        default='/Users/lukelyu/Desktop/trained_model/simu/100k_diverse_population_result',
+                        default=under('models', 'simu', '100k_diverse_population_result'),
                         help='100k result root containing {pipeline}/reg_sss/test_predictions.csv')
     args = parser.parse_args()
     result_dir = args.result_dir
