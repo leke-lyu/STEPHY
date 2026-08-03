@@ -1,5 +1,7 @@
 # STEPHY trained models
 
+**DOI: [10.5281/zenodo.21766065](https://doi.org/10.5281/zenodo.21766065)**
+
 Trained model weights and test-set predictions for **STEPHY: A Graph Neural
 Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from
 Large Viral Phylogenies**.
@@ -91,7 +93,7 @@ reported numbers.
 |---|---|
 | <https://github.com/leke-lyu/STEPHY> | Method: model, training, simulation engines, figure scripts |
 | <https://github.com/leke-lyu/stephy-denmark> | Denmark case study: workflow and results |
-| Denmark phylogenetic intermediates (separate Zenodo deposit) | Bootstrap topologies, time-trees, and BEAST2 trees for the case study |
+| [10.5281/zenodo.21766003](https://doi.org/10.5281/zenodo.21766003) | Denmark phylogenetic intermediates — bootstrap topologies, time-trees and BEAST2 trees for the case study |
 
 ## License
 

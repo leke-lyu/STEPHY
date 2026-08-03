@@ -27,6 +27,11 @@
       "identifier": "https://github.com/leke-lyu/stephy-denmark",
       "relation": "isSupplementTo",
       "resource_type": "software"
+    },
+    {
+      "identifier": "10.5281/zenodo.21766003",
+      "relation": "references",
+      "resource_type": "dataset"
     }
   ],
   "notes": "Unpack with: tar --use-compress-program=unzstd -xf stephy-trained-models.tar.zst"
