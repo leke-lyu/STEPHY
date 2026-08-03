@@ -49,11 +49,14 @@ Each leaf directory holds one trained task:
 
 ## Related deposits and repositories
 
+The project is published as two code repositories and two data deposits:
+
 | Resource | Role |
 |---|---|
-| <https://github.com/leke-lyu/STEPHY> | Method: model, training, simulation engines, figure scripts |
-| <https://github.com/leke-lyu/stephy-denmark> | Denmark case study: workflow and results |
-| [10.5281/zenodo.21766003](https://doi.org/10.5281/zenodo.21766003) | Denmark phylogenetic intermediates — bootstrap topologies, time-trees and BEAST2 trees for the case study |
+| <https://github.com/leke-lyu/STEPHY> | **Code** — the method: model, training, simulation engines, figure scripts |
+| <https://github.com/leke-lyu/stephy-denmark> | **Code** — the Denmark case study: subsampling, phylogenetics, and per-clade inference |
+| [10.5281/zenodo.21766065](https://doi.org/10.5281/zenodo.21766065) | **Data** — trained models *(this deposit)* |
+| [10.5281/zenodo.21766003](https://doi.org/10.5281/zenodo.21766003) | **Data** — Denmark phylogenetic intermediates: bootstrap topologies, time-trees and BEAST2 trees |
 
 ## License
 
