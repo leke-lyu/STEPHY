@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Figure 4 — Denmark SARS-CoV-2 5-clade composite (ML + bootstrap).
+Figure 5 — Denmark SARS-CoV-2 5-clade composite (ML + bootstrap).
 
 Five-row x five-column grid, one row per Nextstrain clade
 (20I, 21I, 21J, 21K, 21L):

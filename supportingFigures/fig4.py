@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fig4.py — Denmark 2021 weekly epidemic summary (4 panels).
+Figure 4 — Denmark 2021 weekly epidemic summary (4 panels).
 
   a) Estimated detected cases by variant x region
   b) GISAID sequences by variant x region
