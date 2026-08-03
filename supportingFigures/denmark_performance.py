@@ -4,10 +4,11 @@ Denmark performance — point-estimate model diagnostics on the Denmark-
 calibrated dataset (single row, 4 columns). Based on fig2.py Row 1,
 retargeted to the 5-region Denmark result and its parameter ranges.
 
-Reads the `pe_old` point-estimate run, whose directory and column names
-predate the reg_*/cls_* convention: targets are r0 / rr / sss / as and the
-pipelines carry a trailing '2' (stephy2, CBLV-CNN2, CBLV-GAT2). That run has
-no conformal artifacts, so there is no coverage row.
+Reads the `pe_old` point-estimate run, whose target directories predate the
+reg_*/cls_* convention used by the simulation runs: they are named r0 / rr /
+sss / as rather than reg_r0 / reg_rr / reg_sss / cls_as. The pipelines are
+stephy, CBLV-CNN and CBLV-GAT. That run has no conformal artifacts, so there
+is no coverage row.
 
   a  R_0   (Reg.)  — true vs predicted, with R2 / Pearson r / MSE
   b  gamma (Reg.)  — true vs predicted, with R2 / Pearson r / MSE
@@ -16,7 +17,7 @@ no conformal artifacts, so there is no coverage row.
 
 Usage:
     python3 denmark_performance.py
-    python3 denmark_performance.py --pipeline CBLV-CNN2
+    python3 denmark_performance.py --pipeline CBLV-CNN
     python3 denmark_performance.py --base_dir /path/to/pe_old
 """
 

@@ -449,6 +449,17 @@ def main():
              'and place it beside this script, or pass an explicit path.')
     args = parser.parse_args()
 
+    if not os.path.exists(args.geojson):
+        sys.exit(f"GADM boundaries not found: {args.geojson}\n"
+                 "Download gadm41_DNK_1.json (Denmark, level 1) from "
+                 "https://gadm.org/download_country.html and place it beside "
+                 "this script, or pass --geojson explicitly. GADM data is not "
+                 "redistributable, so it is not bundled with this repository.")
+    if not os.path.isdir(args.base_dir):
+        sys.exit(f"Case-study data not found: {args.base_dir}\n"
+                 "Set DENMARK_CASE to the Denmark data tree, or pass "
+                 "--base_dir explicitly.")
+
     base_dir = Path(args.base_dir)
     out_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     log = open(out_dir / 'fig5.out', 'w')
