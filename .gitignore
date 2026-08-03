@@ -14,3 +14,8 @@ CBLV-GAT/
 supportingFigures/*.pdf
 supportingFigures/*.png
 supportingFigures/*.out
+
+# GADM boundaries used by fig5.py. Free for academic use but redistribution
+# is not permitted, so the file is kept locally and downloaded per-machine
+# from https://gadm.org/download_country.html (Denmark, level 1).
+supportingFigures/gadm41_DNK_1.json
