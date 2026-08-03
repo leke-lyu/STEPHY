@@ -376,10 +376,26 @@ def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
     edge, black 95% interval, black median tick, red ML star. Regions
     ordered left -> right by population (Hovedstaden -> Nordjylland). The
     glyph legend is drawn once per column on the topmost violin (see main()).
+
+    A region absent from either dict would otherwise be skipped silently,
+    leaving a gap in the panel that reads as "no data" rather than as an
+    error, so both are checked against `regions` first. Every (clade, source)
+    in stephy_output covers all five regions, so a gap always means a bug.
     """
+    missing_boot = [r for r in regions if r not in boot_values]
+    missing_ml = [r for r in regions if r not in ml_values]
+    if missing_boot or missing_ml:
+        sys.exit(
+            f"{ylabel}: incomplete region coverage.\n"
+            f"  no bootstrap values : {missing_boot or 'none'}\n"
+            f"  no ML value         : {missing_ml or 'none'}\n"
+            f"  available           : {sorted(set(boot_values) | set(ml_values))}\n"
+            "Left unfixed these regions would be omitted from the panel "
+            "without warning.")
+
     positions = np.arange(len(regions))
-    boot_data = [boot_values.get(r, np.array([])) for r in regions]
-    ml_pts = [ml_values.get(r, np.nan) for r in regions]
+    boot_data = [boot_values[r] for r in regions]
+    ml_pts = [ml_values[r] for r in regions]
 
     valid = [(i, d) for i, d in enumerate(boot_data) if len(d) > 0]
     if valid:
