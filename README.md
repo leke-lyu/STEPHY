@@ -19,7 +19,8 @@ Phylogenies*.
 | `CBLV-CNN/` | Ablation — CNN only, no graph structure; locations predicted independently. |
 | `simulate_and_extract/` | Simulation engines (12 locations) and shared extraction utilities. |
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
-| `supportingFigures/` | Scripts that render the paper figures, plus the diagnostics and inference benchmarks behind them. |
+| `supportingFigures/` | Scripts that render the paper figures, plus the diagnostics and inference benchmarks behind them. Reads trained models and case-study data from outside the repository — see [Related resources](#related-resources). |
+| `zenodo/` | Packaging script and deposit metadata for the trained-model archive. |
 
 ## Installation
 
@@ -168,6 +169,43 @@ patience 25, seed 42. Early stopping tracks `val_loss` for regression and
 `test_predictions.csv` is keyed by `batch, sim_id, tree_idx` (plus
 `location_idx, location_name` for regression), so rows join back to
 `{id}_nf.csv` and across labels.
+
+## Related resources
+
+This repository holds the method. The trained weights, the empirical
+application to Denmark, and the phylogenetic artefacts behind it are published
+separately so that each can be cited and versioned on its own.
+
+| Resource | Role |
+|---|---|
+| [10.5281/zenodo.21766065](https://doi.org/10.5281/zenodo.21766065) | **Trained models.** Weights, normalisation parameters, held-out predictions and training histories for the simulation benchmarks and the Denmark application. Required to regenerate the paper figures. |
+| [leke-lyu/stephy-denmark](https://github.com/leke-lyu/stephy-denmark) | **Denmark case study.** Applies STEPHY to SARS-CoV-2 transmission between the five Danish regions: proportional subsampling, the Nextstrain build, bootstrap re-estimation of every tree, and per-clade inference with bootstrap intervals. |
+| [10.5281/zenodo.21766003](https://doi.org/10.5281/zenodo.21766003) | **Denmark phylogenetic intermediates.** Bootstrap topologies, time-calibrated trees, ancestral-state reconstructions and the BEAST2 trees fed to STEPHY — roughly three days of compute, archived so the case study reproduces in minutes. |
+| [leke-lyu/denmark-ncov](https://github.com/leke-lyu/denmark-ncov) | Browsable Auspice trees for the three Denmark variant builds. |
+
+### Running the figure scripts
+
+`supportingFigures/` resolves those two external roots from the environment
+rather than bundling them (see `supportingFigures/_paths.py`). Unset variables
+produce a self-describing placeholder path, so a failure names the variable to
+set:
+
+```bash
+tar --use-compress-program=unzstd -xf stephy-trained-models.tar.zst
+export STEPHY_MODELS="$PWD/stephy-trained-models"
+export DENMARK_CASE=/path/to/denmark_case
+```
+
+| Variable | Needed by |
+|---|---|
+| `STEPHY_MODELS` | `fig2`, `fig3`, `performance_scatter`, `population_shift_scatter`, `sss_ranking`, `denmark_performance` |
+| `DENMARK_CASE` | `fig4`, `fig5`, `denmark_tree_tmrca` |
+
+Two inputs are not redistributable and must be supplied locally: `fig5` needs
+GADM level-1 boundaries for Denmark (`gadm41_DNK_1.json`, from
+[gadm.org](https://gadm.org/download_country.html), placed beside the script),
+and `fig4` needs a local GISAID metadata export. Both scripts exit with
+instructions if the file is missing.
 
 ## License
 
