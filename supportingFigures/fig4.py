@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
 """
-Figure 4 — Denmark 2021 weekly epidemic summary (4 panels).
+Figure 4 — Denmark 2021 weekly epidemic summary (4 rows x 3 wave columns).
 
-  a) Estimated detected cases by variant x region
-  b) GISAID sequences by variant x region
+Rows:
+  a) Estimated detected cases per region
+  b) GISAID sequences per region
   c) Sampling proportion (%) before subsampling
   d) Sampling proportion (%) after subsampling
+
+Columns are the three variant waves (Alpha, Delta, Omicron). Each column spans
+exactly the subsampling window that fed the phylodynamic analysis, so every
+week shown is a week the analysis used, and column widths are proportional to
+window length — a week occupies the same space in all three.
+
+Because the column identifies the variant, colour encodes region alone: five
+fixed hues instead of the fifteen variant x region shades one shared axis
+needs. Every row shares one y-axis across the three columns; the count rows
+are log-scaled because Omicron's December peak is ~15x the Alpha and Delta
+windows' and would otherwise flatten them against the baseline.
+
+Restricting to the windows leaves the variants' out-of-window circulation off
+the figure — most visibly Delta's autumn wave, since only ~29% of Delta
+sequences fall inside its window. Per-column coverage is printed to fig4.out.
+
+Row d is capped at 15%; an open caret above the cap marks a series that runs
+off-scale there, and every such point is listed in fig4.out.
 
 Usage:
     python3 fig4.py
@@ -24,7 +43,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
-from matplotlib.colors import to_rgb
+from matplotlib.ticker import NullFormatter, ScalarFormatter
 
 from _paths import under
 
@@ -55,7 +74,11 @@ SSI_REGION_MAP = {'Hovedstaden': 'Hovedstaden', 'Midtjylland': 'Midtjylland',
                   'Syddanmark': 'Syddanmark', 'Sjælland': 'Sjaelland',
                   'Nordjylland': 'Nordjylland'}
 
-VARIANT_COLORS = {'Alpha': '#2196F3', 'Delta': '#FF9800', 'Omicron': '#9C27B0'}
+# Okabe-Ito, ordered so the weakest deuteranope pair (green/reddish-purple)
+# is not adjacent in the legend. Markers repeat the same distinction, which
+# keeps the series separable in greyscale and under colour-vision deficiency.
+REGION_COLORS  = dict(zip(REGIONS, ['#0072B2', '#E69F00', '#009E73',
+                                    '#D55E00', '#CC79A7']))
 REGION_MARKERS = dict(zip(REGIONS, ['o', 's', 'D', '^', 'v']))
 
 SUBSAMPLE_CONFIG = {
@@ -74,17 +97,6 @@ class _Tee:
         for s in self.streams: s.write(x)
     def flush(self):
         for s in self.streams: s.flush()
-
-
-# ── Visual helpers ───────────────────────────────────────────────────────────
-def _make_shades(hex_color, n):
-    """n shades from light to full saturation of hex_color."""
-    r, g, b = to_rgb(hex_color)
-    return [tuple(c * t + (1 - t) for c in (r, g, b))
-            for t in np.linspace(0.3, 1.0, n)]
-
-REGION_SHADES = {v: dict(zip(REGIONS, _make_shades(c, len(REGIONS))))
-                 for v, c in VARIANT_COLORS.items()}
 
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
@@ -118,33 +130,63 @@ def sampling_prop(seq_df, seq_by_region, w2021, variant, region):
     return seqs / detected * 100
 
 
+# ── Wave columns ─────────────────────────────────────────────────────────────
+def window_positions(w2021, window):
+    """Positions in `w2021.index` covered by one variant's subsampling window."""
+    return [i for i, w in enumerate(w2021.index) if window[0] <= w <= window[1]]
+
+
+def row_decades(y_fn, wave_pos):
+    """Decade-aligned (bottom, top) spanning every positive value in a row.
+
+    Log rows share one scale across the three columns, so the bounds have to
+    come from all of them at once rather than from matplotlib's per-axes
+    autoscale.
+    """
+    vals = [np.asarray(y_fn(variant, region), dtype=float)[pos]
+            for variant, pos in wave_pos.items() for region in REGIONS]
+    positive = np.concatenate([v[np.isfinite(v) & (v > 0)] for v in vals])
+    # The 1.4 backs the floor off its decade so a series sitting exactly on a
+    # power of ten (Omicron/Sjaelland touches 1) keeps a whole marker.
+    return (10.0 ** np.floor(np.log10(positive.min())) / 1.4,
+            10.0 ** np.ceil(np.log10(positive.max())))
+
+
 # ── Plotting helpers ─────────────────────────────────────────────────────────
-def add_month_labels(ax, week_starts):
-    """Vertical month dividers + centered month labels on a panel."""
-    months, positions = [], []
-    for i, dt in enumerate(week_starts):
-        m = dt.strftime('%b')
-        if not months or m != months[-1]:
-            positions.append(i)
-            months.append(m)
-    for idx, (pos, label) in enumerate(zip(positions, months)):
-        ax.axvline(x=pos - 0.5, color='gray', ls='--', alpha=0.3, lw=0.4)
-        nxt = positions[idx + 1] if idx + 1 < len(positions) else len(week_starts)
-        ax.text((pos + nxt) / 2, ax.get_ylim()[1] * 0.95, label,
-                fontsize=6, fontweight='bold', ha='center', va='top', color='gray')
+def set_week_ticks(ax, week_starts, n_target=4):
+    """Date ticks at a stride giving roughly `n_target` labels on a facet."""
+    step = max(1, int(np.ceil(len(week_starts) / n_target)))
+    idx = list(range(0, len(week_starts), step))
+    ax.set_xticks(idx)
+    ax.set_xticklabels([week_starts[i].strftime('%d %b') for i in idx],
+                       rotation=45, ha='right', fontsize=6)
 
 
-def plot_panel(ax, y_fn, w2021):
-    """All variant x region lines on a panel using y_fn(variant, region)."""
-    x = np.arange(len(w2021))
-    for variant in VARIANTS:
-        for region in REGIONS:
-            y = np.asarray(y_fn(variant, region), dtype=float)
-            mask = np.isfinite(y) & (y > 0)
-            if mask.any():
-                ax.plot(x[mask], y[mask],
-                        color=REGION_SHADES[variant][region],
-                        marker=REGION_MARKERS[region], ms=2, lw=0.8, alpha=0.8)
+def plot_facet(ax, y_fn, variant, pos):
+    """The five region series for one variant over that wave's weeks."""
+    x = np.arange(len(pos))
+    for region in REGIONS:
+        y = np.asarray(y_fn(variant, region), dtype=float)[pos]
+        mask = np.isfinite(y) & (y > 0)
+        if mask.any():
+            ax.plot(x[mask], y[mask], color=REGION_COLORS[region],
+                    marker=REGION_MARKERS[region], ms=2.2, lw=1.0, alpha=0.9)
+
+
+def mark_offscale(ax, y_fn, variant, pos, w2021, ymax):
+    """Flag every point an axis cap hides — on the panel and on stdout.
+
+    An open caret sits just above the cap in the series colour, so a line
+    leaving the top reads as deliberately off-scale rather than as a series
+    that simply stops.
+    """
+    for region in REGIONS:
+        y = np.asarray(y_fn(variant, region), dtype=float)[pos]
+        for i in np.flatnonzero(np.isfinite(y) & (y > ymax)):
+            ax.plot(i, ymax * 1.05, marker='^', ms=3, mew=0.6, clip_on=False,
+                    markerfacecolor='none', markeredgecolor=REGION_COLORS[region])
+            print(f'  off-scale {variant}/{region} {w2021.index[pos[i]]}: '
+                  f'{y[i]:.1f} above the {ymax:g} axis cap')
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -256,55 +298,111 @@ def main():
 
     print(f'Subsampled: {len(subsampled_ids):,} sequences')
 
-    # ── Figure: 4 stacked rows + shared legend below ─────────────────
-    fig = plt.figure(figsize=(8.30, 10.6))
-    gs = gridspec.GridSpec(4, 1, figure=fig, hspace=0.25)
+    # ── Wave columns: each spans exactly its subsampling window ──────
+    wave_pos = {v: window_positions(w2021, cfg['weeks'])
+                for v, cfg in SUBSAMPLE_CONFIG.items()}
+    for variant, pos in wave_pos.items():
+        weeks = set(w2021.index[pos])
+        of_variant = seq_records['variant'] == variant
+        shown = int((of_variant & seq_records['epiweek'].isin(weeks)).sum())
+        total = int(of_variant.sum())
+        print(f'{variant:8s} column {w2021.index[pos[0]]}..{w2021.index[pos[-1]]} '
+              f'({len(pos)} wks) shows {shown:,}/{total:,} sequences '
+              f'({shown / total:.1%}); the rest circulated outside the window')
+
+    # ── Figure: 4 rows x 3 wave columns + shared legend below ────────
+    # Width tuned so the bbox-trimmed PDF clears Nature's 183 x 247 mm cap
+    # for submission — the five-digit log tick labels widen the left
+    # margin, so this is narrower than the linear-axis version needed.
+    fig = plt.figure(figsize=(8.15, 9.40))
+    gs = gridspec.GridSpec(4, 3, figure=fig, hspace=0.32, wspace=0.12,
+                           width_ratios=[len(wave_pos[v]) for v in VARIANTS])
 
     panel_labels = ['a', 'b', 'c', 'd']
+    # Every row shares one y-axis across the three columns. The count rows use
+    # a log scale because Omicron's December peak is ~15x the Alpha and Delta
+    # windows' and would otherwise flatten them against the baseline.
+    # ymax caps row d, where a couple of first-in-window points spike past 30%
+    # (the subsampler keeps a minimum of one sequence per region-week) and would
+    # otherwise squeeze the 4/8/12% plateaus that panel exists to show.
     panels = [
-        ('Detected Cases per Week',
+        ('Detected Cases per Week', True, None,
          lambda v, r: region_series(seq_by_region, v, r, 'variant_prop', w2021)
                        * w2021[f'cases_{r}']),
-        ('Sequences per Week',
+        ('Sequences per Week', True, None,
          lambda v, r: region_series(seq_by_region, v, r, 'seq_count', w2021)),
-        ('Sampling Proportion (%)',
+        ('Sampling Proportion (%)', False, None,
          lambda v, r: sampling_prop(seq_by_region, seq_by_region, w2021, v, r)),
-        ('Sampling Proportion (%), Subsampled',
+        ('Subsampled Proportion (%)', False, 15.0,
          lambda v, r: sampling_prop(sub_by_region, seq_by_region, w2021, v, r)),
     ]
 
-    for row, (ylabel, y_fn) in enumerate(panels):
-        ax = fig.add_subplot(gs[row])
-        plot_panel(ax, y_fn, w2021)
+    label_axes = []          # the col-0 axes, whose ylabels get aligned below
+    for row, (ylabel, log_y, ymax, y_fn) in enumerate(panels):
+        bounds = row_decades(y_fn, wave_pos) if log_y else None
+        anchor = None
+        for col, variant in enumerate(VARIANTS):
+            ax = fig.add_subplot(gs[row, col], sharey=anchor)
+            if anchor is None:
+                anchor = ax
+            pos = wave_pos[variant]
 
-        ax.set_xlim(-0.5, len(w2021) - 0.5)
-        tick_idx = list(range(0, len(w2021), 4))
-        ax.set_xticks(tick_idx)
-        if row == 3:
-            ax.set_xticklabels([w2021.index[i] for i in tick_idx],
-                               rotation=45, ha='right', fontsize=6)
-        else:
-            ax.set_xticklabels([])
+            plot_facet(ax, y_fn, variant, pos)
 
-        ax.set_ylabel(ylabel, fontsize=8)
-        if 'Proportion' in ylabel:
-            ax.set_ylim(bottom=0)
-        ax.grid(True, axis='y', alpha=0.2)
-        ax.set_axisbelow(True)
+            ax.set_xlim(-0.5, len(pos) - 0.5)
+            if row == len(panels) - 1:
+                set_week_ticks(ax, list(w2021['week_start'].iloc[pos]))
+            else:
+                ax.set_xticks([])
 
-        add_month_labels(ax, w2021['week_start'])
+            if log_y:
+                ax.set_yscale('log')
+                ax.set_ylim(*bounds)
+                fmt = ScalarFormatter()
+                fmt.set_scientific(False)
+                ax.yaxis.set_major_formatter(fmt)
+                ax.yaxis.set_minor_formatter(NullFormatter())
+            else:
+                ax.set_ylim(bottom=0)
+            if ymax is not None:
+                ax.set_ylim(0, ymax)
+                # Integer ticks, so the capped row reads like the one above it
+                # rather than in 2.5-point decimals.
+                ax.set_yticks(np.arange(0, ymax + 1, 5))
+                mark_offscale(ax, y_fn, variant, pos, w2021, ymax)
 
-        ax.text(-0.04, 1.02, panel_labels[row], transform=ax.transAxes,
-                fontsize=14, fontweight='bold', va='bottom', ha='left')
+            if col == 0:
+                ax.set_ylabel(ylabel, fontsize=8)
+                ax.text(-0.20, 1.04, panel_labels[row], transform=ax.transAxes,
+                        fontsize=14, fontweight='bold', va='bottom', ha='left')
+                label_axes.append(ax)
+            else:
+                ax.tick_params(labelleft=False)
+            if row == 0:
+                ax.set_title(variant, fontsize=8, fontweight='bold', pad=4)
+
+            for side in ('top', 'right'):
+                ax.spines[side].set_visible(False)
+            ax.tick_params(direction='out', length=2, width=0.4)
+            ax.tick_params(axis='y', which='minor', length=0)
+
+            ax.grid(True, axis='y', alpha=0.2)
+            if log_y:
+                ax.grid(True, axis='y', which='minor', alpha=0.08)
+            ax.set_axisbelow(True)
+
+    # Tick-label widths differ per row (six-digit log counts vs two-digit
+    # percentages), which would otherwise leave the four ylabels at four
+    # different x positions.
+    fig.align_ylabels(label_axes)
 
     legend_handles = [
-        Line2D([0], [0], color=REGION_SHADES[variant][region],
-               marker=REGION_MARKERS[region], ms=3, lw=0.8,
-               label=f'{variant} – {region}')
-        for variant in VARIANTS for region in REGIONS
+        Line2D([0], [0], color=REGION_COLORS[region],
+               marker=REGION_MARKERS[region], ms=3, lw=1.0, label=region)
+        for region in REGIONS
     ]
     fig.legend(handles=legend_handles, loc='lower center', frameon=False,
-               ncol=5, fontsize=6, bbox_to_anchor=(0.5, 0.01))
+               ncol=5, fontsize=7, bbox_to_anchor=(0.5, 0.02))
 
     out_pdf = out_dir / 'fig4.pdf'
     out_png = out_dir / 'fig4.png'
