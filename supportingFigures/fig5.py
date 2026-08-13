@@ -2,23 +2,33 @@
 """
 Figure 5 — Denmark SARS-CoV-2 5-clade composite (ML + bootstrap).
 
-Five-row x five-column grid, one row per Nextstrain clade
-(20I, 21I, 21J, 21K, 21L):
+Panels a-m. A five-row x five-column grid, one row per Nextstrain clade in
+clade order (20I, 21I, 21J, 21K, 21L):
 
-  Col 0:  Exploded ML timetree, branches colored by Danish division.
-  Col 1:  ML Source-Sink Score choropleth.
-  Col 2:  Bootstrap distribution of SSS per region (40 replicates) + ML star.
-  Col 3:  ML R_0 choropleth.
-  Col 4:  Bootstrap distribution of R_0 per region (40 replicates) + ML star.
+  Col 0:  Exploded ML timetree, branches colored by Danish division  (a)
+  Col 1:  ML Source-Sink Score choropleth (STEPHY)                   (b-f)
+  Col 2:  Paired bootstrap violins of SSS per region                 (b-f)
+  Col 3:  ML R_0 choropleth (STEPHY)                                 (g-k)
+  Col 4:  Paired bootstrap violins of R_0 per region                 (g-k)
+
+Each map shares its panel letter with the violin beside it. Below the grid sit
+two square scatters of STEPHY against the ablation, SSS (l) and R_0 (m).
+
+The violins carry two models: STEPHY offset left of each region's tick, the
+graph-free CBLV-CNN ablation right, so the ablation reads as a reference
+against the paper's result rather than as a second result. Each body shows the
+central 95% of its replicates; the choropleths stay STEPHY-only.
 
 Tree topology comes from stephy_input/<clade>/newick/ml.nwk; division and
 numdate are joined onto each node from the parent lineage's augur outputs
 (traits.json + branch_lengths.json) by node name. Predictions come from
-stephy_output/<clade>/regression.tsv (ml row + 40 replicate rows).
+stephy_output/<clade>/regression.tsv and cblv-cnn_output/<clade>/regression.tsv
+(ml row + 40 replicate rows each).
 
 Usage:
     python3 fig5.py
     python3 fig5.py --base_dir /path/to/bootstrap_uncertainty --geojson /path/to/gadm41_DNK_1.json
+    python3 fig5.py --cnn_dir /path/to/cblv-cnn_output
 """
 
 import os
@@ -37,7 +47,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
-import matplotlib.patches as mpatches
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
@@ -52,11 +61,15 @@ plt.rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
     'font.size': 6,
-    'axes.labelsize': 7,
+    # One source of truth per text role, so sizes cannot drift between panels:
+    # axis labels 6, tick labels 5, legends 5. Set here rather than at each
+    # call site — the three legends had drifted to 6 / 5 / 5 that way, and the
+    # 7 pt axes.labelsize was dead, overridden to 6 at every use.
+    'axes.labelsize': 6,
     'axes.titlesize': 7,
     'xtick.labelsize': 5,
     'ytick.labelsize': 5,
-    'legend.fontsize': 6,
+    'legend.fontsize': 5,
     'figure.dpi': 300,
     'savefig.dpi': 300,
     'pdf.fonttype': 42,
@@ -82,21 +95,32 @@ CLADE_TO_LINEAGE = {
     '21L': 'Omicron',
 }
 
+# Okabe-Ito, shared verbatim with fig4.py so a region keeps one colour across
+# the paper — the two figures previously disagreed, with green meaning
+# Nordjylland here and Syddanmark there. Ordered by population to match
+# REGIONS_BY_POP and the violin x-axis, which also keeps green (#009E73) and
+# reddish-purple (#CC79A7) — the weakest deuteranope pair — non-adjacent in
+# the legend.
 DIVISION_COLORS = {
-    'Hovedstaden': '#4C90C0',
-    'Midtjylland': '#E68133',
-    'Nordjylland': '#75B681',
-    'Sjaelland':   '#D4534E',
-    'Syddanmark':  '#9B59B6',
+    'Hovedstaden': '#0072B2',
+    'Midtjylland': '#E69F00',
+    'Syddanmark':  '#009E73',
+    'Sjaelland':   '#D55E00',
+    'Nordjylland': '#CC79A7',
 }
 DEFAULT_COLOR = '#AAAAAA'
 BRANCH_COLOR = '#888888'   # tree branches: neutral grey; tips keep division color
 
-SSS_CMAP = LinearSegmentedColormap.from_list(
-    'sss_diverging',
+# ColorBrewer RdBu stops, but with the three near-white steps pulled in tight
+# around the midpoint instead of sitting at even sixths. Evenly spaced they
+# gave every |SSS| below ~0.3 an almost white fill, which is most of the Alpha
+# and Delta rows; compressing the neutral band lets those rows show their sign
+# while 0 still reads as "neither source nor sink". Positions stay mirrored
+# about 0.5 so the two arms keep equal steps.
+SSS_CMAP = LinearSegmentedColormap.from_list('sss_diverging', list(zip(
+    [0.0, 0.25, 0.42, 0.5, 0.58, 0.75, 1.0],
     ['#2166AC', '#67A9CF', '#D1E5F0', '#FAFAFA',
-     '#FDDBC7', '#EF8A62', '#B2182B'],
-)
+     '#FDDBC7', '#EF8A62', '#B2182B'])))
 R0_CMAP = LinearSegmentedColormap.from_list(
     'r0_sequential',
     ['#FFFFD4', '#FEE391', '#FEC44F', '#FE9929',
@@ -109,13 +133,50 @@ REGION_NAME_MAP = {'Sjælland': 'Sjaelland'}
 # stephy_lib.DIVISION_TO_LOC and the reference violin_r0_sss.png).
 REGIONS_BY_POP = ['Hovedstaden', 'Midtjylland', 'Syddanmark',
                   'Sjaelland', 'Nordjylland']
-SSS_YLIM = (-1.05, 1.05)
-R0_YLIM = (0.8, 3.0)
-VIOLIN_FACE = '#A9C5DE'
-ML_COLOR = '#D62728'
+# One fixed range per metric, shared by that metric's choropleth and its
+# violins, so a map colour and a violin height mean the same number. Round
+# endpoints are chosen over data-derived ones because they read cleanly on the
+# colorbar and stay put as predictions are regenerated. SSS's is its full
+# definitional range; R_0's covers the bootstrap spread with headroom.
+SSS_LIM = (-1.0, 1.0)
+R0_LIM = (0.8, 3.0)
+
+# Hue is reserved for region across the whole figure (panels a, l, m), so the
+# two model colours must avoid DIVISION_COLORS and the two colormap ramps.
+# #7A0177 is the highest-chroma colour satisfying both: it keeps the region
+# palette's own worst-pair baseline under the dataviz validator (--pairs all),
+# where bright magentas collapse onto Nordjylland's pink under deuteranopia and
+# crimson lands ΔE 3.5 from the SSS ramp's red end — indistinguishable from the
+# map drawn beside it. Only a *dark* neutral pairs with it; light greys collapse
+# onto the same pink. Rejected candidates are catalogued in tasks/next.md.
+C_STEPHY = '#7A0177'
+C_CNN = '#4D4D4D'
+VIOLIN_WIDTH = 0.32
+LEGEND_LOC = 'upper right'   # same corner in both violin columns; see add_model_legend
+
+# Weight as well as hue separates the two, so the paper's result reads first:
+# STEPHY near-opaque with black statistics and a large star, the ablation faint
+# with grey ones and a small diamond, sitting behind it as a reference.
+MODEL_STYLES = {
+    'STEPHY':   dict(offset=-0.18, color=C_STEPHY, alpha=0.70, stat='#222222',
+                     ml_marker='*', ml_size=22, ml_edge='black'),
+    'CBLV-CNN': dict(offset=+0.18, color=C_CNN, alpha=0.28, stat='#909090',
+                     ml_marker='D', ml_size=6, ml_edge='#6E6E6E'),
+}
+
+# Marker shape carries clade in the scatter panels, where fill carries region.
+# Same assignment as the case study's compare figure.
+CLADE_MARKERS = {'20I': 'o', '21I': 's', '21J': '^', '21K': 'D', '21L': 'v'}
 
 FIG_WIDTH = 3.39
 FIG_RATIO = 2
+# Height of the scatter row, in inches, added below the 5x5 grid. The grid's
+# own geometry is computed from FIG_WIDTH/FIG_RATIO alone, so growing this
+# lengthens the figure without touching its width.
+SCATTER_H = 3.05
+# Clearance between the 5x5 grid and the scatter row, in inches. It has to
+# hold the bottom violins' rotated region labels *and* the two colorbars.
+GAP_H = 1.0
 Y_GAP = 500        # vertical y-data gap between stacked trees (must fit a label)
 LABEL_OFFSET = 80  # label baseline above each tree's top tip (y-data units)
 HORIZ_LW = 0.4
@@ -237,14 +298,19 @@ def compute_subtree_sizes(tree):
     return sizes
 
 
-def load_clade_predictions(base_dir, clade):
+def load_clade_predictions(pred_dir, clade):
     """Return ML + bootstrap distributions for SSS and R0 from regression.tsv.
+
+    `pred_dir` is a directory of per-clade predictions — either STEPHY's
+    stephy_output/ or the CBLV-CNN ablation's cblv-cnn_output/. Both are
+    written by the same inference script with the same columns, so one reader
+    serves both and the two models cannot diverge through their loading code.
 
     Returns:
         sss_ml, r0_ml:    {region: float}                — ML point estimates.
         sss_boot, r0_boot:{region: 1D np.ndarray}        — per-replicate values.
     """
-    reg_path = base_dir / 'stephy_output' / clade / 'regression.tsv'
+    reg_path = pred_dir / clade / 'regression.tsv'
     df = pd.read_csv(reg_path, sep='\t')
     ml = df[df['source'] == 'ml']
     boot = df[df['source'].astype(str).str.startswith('replicate_')]
@@ -256,6 +322,145 @@ def load_clade_predictions(base_dir, clade):
     r0_boot = {region: g['r0_point'].to_numpy()
                for region, g in boot.groupby('location_name')}
     return sss_ml, r0_ml, sss_boot, r0_boot
+
+
+def load_paired(stephy_dir, cnn_dir, clade, columns):
+    """Both models' predictions for one clade, aligned replicate by replicate.
+
+    The scatter panels put one point per (region, replicate) at the two models'
+    predictions *for the same resampled tree*, so the pairing has to be by
+    replicate id. Row order happens to agree between the two files today, but
+    relying on it would silently scramble the pairing if either were ever
+    regenerated in a different order — and a scrambled cloud looks entirely
+    plausible. So the join is explicit and the replicate sets are checked.
+
+    Both metrics are extracted from one pass, since they share the file.
+
+    Returns {column: {region: (ml_s, ml_c, boot_s, boot_c)}}.
+    """
+    def frame(d):
+        return pd.read_csv(d / clade / 'regression.tsv', sep='\t')
+
+    fs, fc = frame(stephy_dir), frame(cnn_dir)
+    out = {col: {} for col in columns}
+    for region in REGIONS_BY_POP:
+        def split(df, col):
+            m = df['location_name'] == region
+            rep = df[m & df['source'].astype(str).str.startswith('replicate_')]
+            ml = df[m & (df['source'] == 'ml')]
+            return ml[col].iloc[0], rep.set_index('source')[col]
+
+        for col in columns:
+            ml_s, rep_s = split(fs, col)
+            ml_c, rep_c = split(fc, col)
+            if set(rep_s.index) != set(rep_c.index):
+                only = sorted(set(rep_s.index) ^ set(rep_c.index))
+                sys.exit(f"{clade}/{region}: the two models cover different "
+                         f"replicates ({len(rep_s)} vs {len(rep_c)}); "
+                         f"not in both: {only[:5]}")
+            idx = sorted(rep_s.index)
+            out[col][region] = (ml_s, ml_c,
+                                rep_s.loc[idx].to_numpy(),
+                                rep_c.loc[idx].to_numpy())
+    return out
+
+
+def observed_range(*model_data, ml_key, boot_key):
+    """Return (min, max) over every ML point and bootstrap replicate given.
+
+    The axis ranges are fixed round numbers (SSS_LIM, R0_LIM), so nothing here
+    sets them; this exists so each run prints what the data actually spans
+    beside what the axis shows. A metric whose values drift outside its fixed
+    range would otherwise only surface as a clipped violin.
+    """
+    values = []
+    for data in model_data:
+        for d in data.values():
+            values.extend(d[ml_key].values())
+            for replicates in d[boot_key].values():
+                values.extend(replicates.tolist())
+    return min(values), max(values)
+
+
+def report_bootstrap_coverage(clade_data, labels, metrics):
+    """Print how often each ML estimate falls inside its bootstrap spread.
+
+    One cell is one (clade, region, metric). A cell counts as covered when the
+    ML point lies inside the replicates' central 95% interval, and separately
+    when it lies anywhere inside their full range. Both are drawn — the CI bar
+    and the ML star — so any single cell is checkable by eye; this table is the
+    whole grid at once, written to fig5.out so the figure and the number quoted
+    alongside it cannot drift apart.
+    """
+    print('\nML estimate vs bootstrap spread (cells inside 95% CI / full range)')
+    totals = {name: [0, 0, 0] for _, _, name in metrics}
+    for label in labels:
+        d = clade_data[label]
+        row = []
+        for ml_key, boot_key, name in metrics:
+            in_ci = in_range = n = 0
+            for region in REGIONS_BY_POP:
+                ml, replicates = d[ml_key][region], d[boot_key][region]
+                lo, hi = np.percentile(replicates, [2.5, 97.5])
+                n += 1
+                in_ci += lo <= ml <= hi
+                in_range += replicates.min() <= ml <= replicates.max()
+            row.append(f'{name} {in_ci}/{n} · {in_range}/{n}')
+            totals[name][0] += in_ci
+            totals[name][1] += in_range
+            totals[name][2] += n
+        print(f'  {label:<12} ' + '   '.join(row))
+
+    overall = [sum(t[i] for t in totals.values()) for i in range(3)]
+    for name, (ci, rng, n) in totals.items():
+        print(f'  {"total " + name:<12} {ci}/{n} ({ci / n:.0%}) · '
+              f'{rng}/{n} ({rng / n:.0%})')
+    print(f'  {"all cells":<12} {overall[0]}/{overall[2]} '
+          f'({overall[0] / overall[2]:.0%}) · {overall[1]}/{overall[2]} '
+          f'({overall[1] / overall[2]:.0%})')
+
+
+def report_clipped(records):
+    """Print anything a violin still draws outside its axis. Should be empty.
+
+    Bodies are trimmed to their 95% interval, which brings every drawn element
+    inside the fixed axes, so this is a regression check rather than a routine
+    report: if it ever prints, the figure is silently cutting something off.
+    """
+    if not records:
+        print('\nNothing drawn outside the violin axes.')
+        return
+    print('\n*** Drawn outside the violin axes — the panel is cutting these '
+          'off silently:')
+    for metric, clade, model, region, values in records:
+        shown = ', '.join(f'{v:.3f}' for v in np.sort(values))
+        print(f'  {metric:<4} {clade:<12} {model:<9} {region:<12} {shown}')
+
+
+def report_out_of_range(models, ml_key, boot_key, metric, valid):
+    """Print predictions outside a metric's definitional range, per model.
+
+    SSS is (exports - imports) / (exports + imports), so no true value can
+    leave [-1, 1] — but the regression head is an unbounded nn.Linear, so a
+    prediction can. Trimming the violins to 95% keeps such a value from
+    distorting the panel, which also means the figure no longer shows it: this
+    check is what keeps it on the record. It reads the full prediction set, not
+    what was drawn, so it is unaffected by any plotting choice.
+    """
+    print(f'\n{metric} predictions outside its definitional range {valid}:')
+    for name, data in models:
+        offenders = []
+        for clade, d in data.items():
+            for region in REGIONS_BY_POP:
+                for v in np.append(d[boot_key][region], d[ml_key][region]):
+                    if v < valid[0] or v > valid[1]:
+                        offenders.append((clade, region, v))
+        total = sum(len(d[boot_key][r]) + 1
+                    for d in data.values() for r in REGIONS_BY_POP)
+        print(f'  {name:<9} {len(offenders)}/{total}')
+        for clade, region, v in offenders:
+            print(f'      {clade} / {region}: {v:.4f}  (not drawn anywhere: '
+                  'outside the violins\' 95% trim and the scatter axis)')
 
 
 def load_regions(geojson_path):
@@ -368,63 +573,87 @@ def draw_tree(ax, tree, y_offset, subtree_sizes, log_max):
                    alpha=0.6)
 
 
-def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
+def draw_violin(ax, models, ylim, ylabel,
                 regions=REGIONS_BY_POP, show_xticks=False):
-    """Per-clade bootstrap violin: distribution + 95% CI + median + ML star.
+    """Per-clade bootstrap violins for one metric, one violin per model.
 
-    Mirrors stephy_output/violin_r0_sss.png — light-blue body with a soft
-    edge, black 95% interval, black median tick, red ML star. Regions
-    ordered left -> right by population (Hovedstaden -> Nordjylland). The
-    glyph legend is drawn once per column on the topmost violin (see main()).
+    `models` is a list of (name, ml_values, boot_values). Each region's tick
+    carries a pair of translucent violins, STEPHY offset left and the CBLV-CNN
+    ablation right, styled per MODEL_STYLES. This mirrors panels c and d of the
+    case study's compare_stephy_vs_cnn figure, so the paper's two
+    model-comparison panels use one visual language.
+
+    Regions run left -> right by population (Hovedstaden -> Nordjylland).
+    `ylim` is the metric's fixed shared scale (SSS_LIM / R0_LIM).
+
+    **Each body is trimmed to the central 95% of its replicates**, so a violin
+    spans exactly the interval its black bar marks. The density itself is still
+    estimated from all 40 replicates — only the drawn extent is bounded — so
+    the shape inside the interval is unaffected by the trim. Trimming is what
+    keeps a single wild replicate from setting a violin's height: the CBLV-CNN
+    ablation predicts SSS = 1.312 for one 21L / Hovedstaden tree, which is
+    outside SSS's definitional [-1, 1] and 4.3 sd above that cell's other
+    replicates. Such values are excluded from the figure and reported instead;
+    see report_out_of_range.
+
+    Returns the (model, region, values) records whose *drawn* elements still
+    fall outside `ylim` — a safety net that should stay empty now that bodies
+    are trimmed, and which prints rather than silently clipping if it does not.
 
     A region absent from either dict would otherwise be skipped silently,
-    leaving a gap in the panel that reads as "no data" rather than as an
-    error, so both are checked against `regions` first. Every (clade, source)
-    in stephy_output covers all five regions, so a gap always means a bug.
+    leaving a gap that reads as "no data" rather than as an error, so both are
+    checked against `regions` first. Every (clade, source) in either output
+    covers all five regions, so a gap always means a bug.
     """
-    missing_boot = [r for r in regions if r not in boot_values]
-    missing_ml = [r for r in regions if r not in ml_values]
-    if missing_boot or missing_ml:
-        sys.exit(
-            f"{ylabel}: incomplete region coverage.\n"
-            f"  no bootstrap values : {missing_boot or 'none'}\n"
-            f"  no ML value         : {missing_ml or 'none'}\n"
-            f"  available           : {sorted(set(boot_values) | set(ml_values))}\n"
-            "Left unfixed these regions would be omitted from the panel "
-            "without warning.")
-
     positions = np.arange(len(regions))
-    boot_data = [boot_values[r] for r in regions]
-    ml_pts = [ml_values[r] for r in regions]
+    offscale = []
 
-    valid = [(i, d) for i, d in enumerate(boot_data) if len(d) > 0]
-    if valid:
-        parts = ax.violinplot(
-            [d for _, d in valid],
-            positions=[i for i, _ in valid],
-            widths=0.78, showmedians=False, showextrema=False)
-        for pc in parts['bodies']:
-            pc.set_facecolor(VIOLIN_FACE)
-            pc.set_edgecolor('#5B7E9E')
-            pc.set_linewidth(0.6)
-            pc.set_alpha(0.85)
+    for name, ml_values, boot_values in models:
+        style = MODEL_STYLES[name]
+        missing_boot = [r for r in regions if r not in boot_values]
+        missing_ml = [r for r in regions if r not in ml_values]
+        if missing_boot or missing_ml:
+            sys.exit(
+                f"{ylabel} / {name}: incomplete region coverage.\n"
+                f"  no bootstrap values : {missing_boot or 'none'}\n"
+                f"  no ML value         : {missing_ml or 'none'}\n"
+                f"  available           : "
+                f"{sorted(set(boot_values) | set(ml_values))}\n"
+                "Left unfixed these regions would be omitted from the panel "
+                "without warning.")
 
-    for i, d in enumerate(boot_data):
-        if len(d) == 0:
-            continue
-        lo, hi = np.percentile(d, [2.5, 97.5])
-        med = np.median(d)
-        ax.vlines(i, lo, hi, color='#222222', linewidth=0.8, zorder=3,
-                  capstyle='round')
-        ax.hlines(med, i - 0.22, i + 0.22,
-                  color='#222222', linewidth=1.0, zorder=4,
-                  capstyle='round')
+        for i, region in enumerate(regions):
+            d = boot_values[region]
+            ml = ml_values[region]
+            pos = i + style['offset']
 
-    for i, v in enumerate(ml_pts):
-        if v is None or (isinstance(v, float) and np.isnan(v)):
-            continue
-        ax.scatter([i], [v], marker='*', s=35, color=ML_COLOR,
-                   edgecolors='black', linewidths=0.4, zorder=5)
+            lo, hi = np.percentile(d, [2.5, 97.5])
+
+            parts = ax.violinplot([d], positions=[pos], widths=VIOLIN_WIDTH,
+                                  showmedians=False, showextrema=False)
+            for pc in parts['bodies']:
+                # Clamp the body's outline to the 95% interval. The KDE behind
+                # it still saw every replicate, so this bounds the drawn extent
+                # without reshaping the density; the ends square off flush with
+                # the interval bar drawn over them.
+                verts = pc.get_paths()[0].vertices
+                verts[:, 1] = np.clip(verts[:, 1], lo, hi)
+                pc.set_facecolor(style['color'])
+                pc.set_edgecolor(style['color'])
+                pc.set_linewidth(0.5)
+                pc.set_alpha(style['alpha'])
+
+            ax.vlines(pos, lo, hi, color=style['stat'], linewidth=0.6, zorder=3)
+            ax.hlines(np.median(d), pos - 0.12, pos + 0.12,
+                      color=style['stat'], linewidth=0.8, zorder=4)
+            ax.scatter([pos], [ml], marker=style['ml_marker'],
+                       s=style['ml_size'], color=style['color'],
+                       edgecolors=style['ml_edge'], linewidths=0.3, zorder=5)
+
+            drawn = np.array([lo, hi, ml])
+            outside = drawn[(drawn < ylim[0]) | (drawn > ylim[1])]
+            if outside.size:
+                offscale.append((name, region, outside))
 
     ax.set_xlim(-0.6, len(regions) - 0.4)
     ax.set_ylim(*ylim)
@@ -433,12 +662,13 @@ def draw_violin(ax, ml_values, boot_values, ylim, ylabel,
         ax.set_xticklabels(regions, rotation=45, ha='right', fontsize=5)
     else:
         ax.set_xticklabels([])
-    ax.set_ylabel(ylabel, fontsize=6)
+    ax.set_ylabel(ylabel)
     ax.tick_params(axis='y', labelsize=5)
-    ax.grid(True, axis='y', alpha=0.3, linewidth=0.5)
+    ax.grid(True, axis='y', alpha=0.3, linewidth=0.4)
     ax.set_axisbelow(True)
     for spine in ('top', 'right'):
         ax.spines[spine].set_visible(False)
+    return offscale
 
 
 def draw_choropleth(ax, gdf, values, label, norm, cmap):
@@ -461,6 +691,116 @@ def draw_choropleth(ax, gdf, values, label, norm, cmap):
                  color='#333333', pad=2)
 
 
+def draw_scatter(ax, paired, lim, name):
+    """One metric, STEPHY on x against the CBLV-CNN ablation on y.
+
+    Every (clade, region) cell contributes one filled ML marker and a cloud of
+    40 hollow points, each positioned by the two models' predictions for the
+    *same* resampled tree. The cloud therefore shows the joint distribution
+    rather than two marginal intervals: elongated along the identity line means
+    the models move together across replicates, elongated across it means they
+    do not — a distinction the violins in columns 2 and 4 cannot make, because
+    they show each model's spread separately.
+
+    Fill is region and shape is clade, matching the tree legend in panel a, so
+    hue means the same thing here as everywhere else in the figure.
+
+    `lim` is the metric's shared scale, reused from the maps and violins rather
+    than fitted to the cloud. For SSS that bounds the panel at the metric's own
+    [-1, 1] definition, which excludes the ablation's single impossible 1.312
+    replicate; report_out_of_range keeps it on the record.
+    """
+    xs, ys = [], []
+    for clade, cells in paired.items():
+        for region, (ml_s, ml_c, boot_s, boot_c) in cells.items():
+            # Hollow, because 1,000 filled markers this size merge into blobs;
+            # they still carry the clade shape so a cloud can be traced back.
+            ax.scatter(boot_s, boot_c, marker=CLADE_MARKERS[clade], s=4,
+                       facecolor='none', edgecolor=DIVISION_COLORS[region],
+                       alpha=0.55, linewidths=0.25, zorder=1)
+            ax.scatter([ml_s], [ml_c], marker=CLADE_MARKERS[clade], s=11,
+                       facecolor=DIVISION_COLORS[region], edgecolor='#222222',
+                       linewidths=0.3, zorder=4)
+            xs.append(ml_s)
+            ys.append(ml_c)
+
+    xs, ys = np.array(xs), np.array(ys)
+    ax.plot(lim, lim, ls='--', lw=0.5, color='#444444', zorder=3)
+    ax.set_xlim(*lim)
+    ax.set_ylim(*lim)
+    ax.set_aspect('equal')
+
+    # r / MAE / bias describe the 25 ML markers only, never the cloud; the
+    # replicate share is the one line that uses all 1,000 pairs. Both are
+    # computed over every value, including any the axis excludes.
+    #
+    # Bottom right, because that corner is empty in both panels — measured, not
+    # assumed: no point of either metric falls in the block's footprint there,
+    # where the top-left corner it used to occupy overlaps 20 points on SSS.
+    above = np.mean([c > s for cells in paired.values()
+                     for _, _, bs, bc in cells.values()
+                     for s, c in zip(bs, bc)])
+    ax.text(0.97, 0.03,
+            f'r = {np.corrcoef(xs, ys)[0, 1]:.2f}\n'
+            f'MAE = {np.abs(xs - ys).mean():.3f}\n'
+            f'bias = {np.mean(ys - xs):+.3f}\n'
+            f'replicates above y=x: {above:.0%}',
+            transform=ax.transAxes, va='bottom', ha='right', ma='left',
+            fontsize=6, color='#333333', linespacing=1.4)
+    ax.set_xlabel(f'{name} — STEPHY')
+    ax.set_ylabel(f'{name} — CBLV-CNN')
+    ax.tick_params(labelsize=5)
+    for sp in ('top', 'right'):
+        ax.spines[sp].set_visible(False)
+
+
+def add_model_legend(ax):
+    """Key the two violin series on the top panel of a violin column.
+
+    Each column gets its own copy rather than sharing one, so neither the SSS
+    nor the R_0 block depends on the reader having looked at the other, and
+    both sit in the same corner of the same row so the pair reads as one
+    decision rather than two.
+
+    LEGEND_LOC is upper right because that is the only corner free in both
+    columns at the top row: measured against the data on Alpha 20I, the right
+    half leaves 22% of the SSS panel and 79% of the R_0 panel clear, where
+    upper left leaves only 13% on SSS and the lower corners leave 3-5% on R_0.
+
+    The handles carry both encodings at once — fill colour and ML marker — and
+    the labels stay bare model names: spelling out "left/right of each pair",
+    as the case-study comparison figure does, overflows a panel this narrow and
+    pushes the bbox-trimmed figure past Nature's 183 mm width.
+    """
+    ax.legend(
+        handles=[Line2D([0], [0], marker=s['ml_marker'], color='w',
+                        markerfacecolor=s['color'],
+                        markeredgecolor=s['ml_edge'], markeredgewidth=0.3,
+                        markersize=6 if s['ml_marker'] == '*' else 3.5,
+                        label=name)
+                 for name, s in MODEL_STYLES.items()],
+        loc=LEGEND_LOC, frameon=False, handlelength=1.0,
+        borderpad=0.1, labelspacing=0.25, handletextpad=0.4,
+        borderaxespad=0.2)
+
+
+def add_colorbar(fig, map_ax, y, cmap, norm, lim, label):
+    """Draw a metric's horizontal colorbar under its map column.
+
+    The bar is inset to the map column's own width rather than spanning the
+    map and violin together, so it reads as belonging to the choropleths.
+    Three ticks — the two ends and the midpoint of the shared scale — is as
+    many as fit at this width without the labels colliding.
+    """
+    pos = map_ax.get_position()
+    cax = fig.add_axes([pos.x0 + 0.005, y, pos.width - 0.01, 0.008])
+    cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm),
+                        cax=cax, orientation='horizontal')
+    cbar.set_label(label)
+    cbar.set_ticks(np.round(np.linspace(lim[0], lim[1], 3), 1))
+    cbar.ax.tick_params(labelsize=5)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -470,8 +810,10 @@ def main():
 
     Loads each clade's ML tree (decorated with division + numdate from the
     parent lineage's augur outputs), reads ML and bootstrap predictions from
-    stephy_output/<clade>/regression.tsv, then assembles a 5x5 panel grid
-    with one row per clade and shared colorbars under the map columns.
+    stephy_output/<clade>/regression.tsv and the CBLV-CNN ablation's
+    cblv-cnn_output/<clade>/regression.tsv, then assembles a 5x5 panel grid
+    with one row per clade and shared colorbars under the map columns. The
+    choropleths stay STEPHY-only; the violins carry both models.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -479,6 +821,12 @@ def main():
         default=under('denmark', 'nextstrain', 'bootstrap_uncertainty'),
         help='Root containing <Lineage>/ml_point_estimate/, stephy_input/, '
              'stephy_output/.')
+    parser.add_argument(
+        '--cnn_dir', type=str,
+        default=under('denmark', 'nextstrain', 'bootstrap_uncertainty',
+                      'cblv-cnn_output'),
+        help='Per-clade predictions from the CBLV-CNN ablation, drawn as the '
+             'right half of each violin. Same layout as stephy_output/.')
     parser.add_argument(
         '--geojson', type=str,
         default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -498,6 +846,12 @@ def main():
         sys.exit(f"Case-study data not found: {args.base_dir}\n"
                  "Set DENMARK_CASE to the Denmark data tree, or pass "
                  "--base_dir explicitly.")
+    if not os.path.isdir(args.cnn_dir):
+        sys.exit(f"CBLV-CNN predictions not found: {args.cnn_dir}\n"
+                 "Every violin draws both models, so this is required. "
+                 "Regenerate it with the case study's "
+                 "07_run_stephy.py --family cblv-cnn, or pass --cnn_dir "
+                 "explicitly.")
 
     base_dir = Path(args.base_dir)
     out_dir = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -518,37 +872,76 @@ def main():
         print(f'{n_tips} tips')
         loaded.append((tree, CLADE_LABELS[clade], n_tips, sizes, clade))
 
-    # Chronological: earliest clade at top
-    loaded.sort(key=lambda t: (t[0].root.absoluteTime, -t[2]), reverse=True)
-    visual_order = list(reversed(loaded))
+    # Row order top-to-bottom in every column is clade name (20I, 21I, 21J,
+    # 21K, 21L), i.e. CLADES as declared. An earlier version sorted by root
+    # date instead, which put 21J above 21I because Delta's two clades root a
+    # few days apart — a distinction no reader is tracking, and one that made
+    # the panel letters run out of clade order. The trees are drawn in reverse,
+    # because they stack upward from y=0; their true root dates still set their
+    # x positions, so nothing about the timeline changes.
+    loaded.sort(key=lambda t: CLADES.index(t[4]))
 
-    # --- Load per-clade ML + bootstrap predictions ---
-    clade_data = {}
-    for clade in CLADES:
-        sss_ml, r0_ml, sss_boot, r0_boot = load_clade_predictions(
-            base_dir, clade)
-        clade_data[CLADE_LABELS[clade]] = {
-            'sss_ml': sss_ml, 'r0_ml': r0_ml,
-            'sss_boot': sss_boot, 'r0_boot': r0_boot,
-        }
+    # --- Load per-clade ML + bootstrap predictions, per model ---
+    def load_model(pred_dir):
+        out = {}
+        for clade in CLADES:
+            sss_ml, r0_ml, sss_boot, r0_boot = load_clade_predictions(
+                pred_dir, clade)
+            out[CLADE_LABELS[clade]] = {
+                'sss_ml': sss_ml, 'r0_ml': r0_ml,
+                'sss_boot': sss_boot, 'r0_boot': r0_boot,
+            }
+        return out
+
+    clade_data = load_model(base_dir / 'stephy_output')
+    cnn_data = load_model(Path(args.cnn_dir))
     sss_data = {lbl: d['sss_ml'] for lbl, d in clade_data.items()}
     r0_data = {lbl: d['r0_ml'] for lbl, d in clade_data.items()}
 
-    sss_norm = TwoSlopeNorm(vcenter=0, vmin=-1, vmax=1)
-    r0_norm = plt.Normalize(vmin=0.8, vmax=3.0)
+    sss_lim, r0_lim = SSS_LIM, R0_LIM
+    sss_norm = TwoSlopeNorm(vcenter=0, vmin=sss_lim[0], vmax=sss_lim[1])
+    r0_norm = plt.Normalize(vmin=r0_lim[0], vmax=r0_lim[1])
+    print('\nShared scales (axis vs the data it has to hold)')
+    for name, lim, ml_key, boot_key in (('SSS', sss_lim, 'sss_ml', 'sss_boot'),
+                                        ('R_0', r0_lim, 'r0_ml', 'r0_boot')):
+        lo, hi = observed_range(clade_data, cnn_data,
+                                ml_key=ml_key, boot_key=boot_key)
+        print(f'  {name:<4} axis [{lim[0]:.2f}, {lim[1]:.2f}]   '
+              f'both models span [{lo:.3f}, {hi:.3f}]')
 
-    # --- Figure layout: tree | SSS map | SSS violin | R0 map | R0 violin ---
-    fig_height = FIG_WIDTH * FIG_RATIO
-    map_width = fig_height / 5
+    report_bootstrap_coverage(
+        clade_data, [lbl for _, lbl, _, _, _ in loaded],
+        [('sss_ml', 'sss_boot', 'SSS'), ('r0_ml', 'r0_boot', 'R_0')])
+
+    # --- Figure layout ---------------------------------------------------
+    # Grid block: tree | SSS map | SSS violin | R0 map | R0 violin.
+    # Scatter block below it: SSS scatter | R_0 scatter, halving the width.
+    #
+    # The grid's geometry still derives from FIG_WIDTH/FIG_RATIO alone, so the
+    # scatter row lengthens the figure without widening it — the width is at
+    # Nature's 183 mm cap and has to stay there.
+    grid_height = FIG_WIDTH * FIG_RATIO
+    map_width = grid_height / 5
     violin_width = map_width
+    widths = [FIG_WIDTH, map_width, violin_width, map_width, violin_width]
     fig = plt.figure(
-        figsize=(FIG_WIDTH + 2 * (map_width + violin_width), fig_height),
-        facecolor='w')
-    gs = gridspec.GridSpec(
-        5, 5, figure=fig,
-        width_ratios=[FIG_WIDTH, map_width, violin_width,
-                      map_width, violin_width],
+        figsize=(sum(widths), grid_height + GAP_H + SCATTER_H), facecolor='w')
+    # Two stacked blocks rather than one 6-row grid: hspace is uniform within a
+    # GridSpec, so a 6th row could not be given more clearance than the five
+    # above it — and it needs much more, because row f/k's rotated region
+    # labels hang below the grid and the colorbars sit under that again.
+    outer = gridspec.GridSpec(
+        2, 1, figure=fig, height_ratios=[grid_height, SCATTER_H],
+        hspace=2 * GAP_H / (grid_height + SCATTER_H))
+    gs = gridspec.GridSpecFromSubplotSpec(
+        5, 5, subplot_spec=outer[0], width_ratios=widths,
         wspace=0.40, hspace=0.18)
+    # The scatter row ignores the grid's column widths and simply halves the
+    # figure: l and m are square by construction (equal aspect on a shared
+    # scale), so giving each half the width is what makes them as large as the
+    # page allows. Their clade key goes under the row instead of beside it.
+    gs_scatter = gridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer[1], wspace=0.28)
 
     # --- Left: stacked trees ---
     ax_tree = fig.add_subplot(gs[:, 0])
@@ -562,7 +955,7 @@ def main():
     # the tree column. Left-shift their labels so the text doesn't extend past
     # the column into the SSS panels.
     LABEL_X_SHIFT_DAYS = {'21K': 90, '21L': 90}
-    for tree, label, n_tips, sizes, clade in loaded:
+    for tree, label, n_tips, sizes, clade in reversed(loaded):
         draw_tree(ax_tree, tree, cumulative_y, sizes, log_max)
         root_x = decimal_to_datetime(tree.root.absoluteTime)
         label_x = root_x - timedelta(days=LABEL_X_SHIFT_DAYS.get(clade, 0))
@@ -580,7 +973,7 @@ def main():
     ax_tree.tick_params(axis='x', direction='out', length=2)
     ax_tree.tick_params(axis='y', size=0)
     ax_tree.set_yticklabels([])
-    ax_tree.grid(axis='x', ls='--', alpha=0.3, linewidth=0.3)
+    ax_tree.grid(axis='x', alpha=0.3, linewidth=0.3)
     ax_tree.set_ylim(-2, cumulative_y)
     ax_tree.xaxis.set_major_locator(
         mdates.MonthLocator(bymonth=[1, 3, 5, 7, 9, 11]))
@@ -601,15 +994,9 @@ def main():
     ]
     last_ax = {}
     for col, data, norm, cmap, panel_letters in map_configs:
-        for i, (_, label, _, _, _) in enumerate(visual_order):
+        for i, (_, label, _, _, _) in enumerate(loaded):
             ax = fig.add_subplot(gs[i, col])
-            values = data.get(label)
-            if not values:
-                ax.axis('off')
-                ax.set_title(label, fontsize=7, fontweight='bold',
-                             color='#333333')
-                continue
-            draw_choropleth(ax, gdf, values, label, norm, cmap)
+            draw_choropleth(ax, gdf, data[label], label, norm, cmap)
             ax.text(-0.08, 1.05, panel_letters[i], transform=ax.transAxes,
                     fontsize=14, fontweight='bold', va='top', ha='right')
         last_ax[col] = ax
@@ -617,44 +1004,66 @@ def main():
     # --- SSS / R0 bootstrap violin columns (2, 4) — share panel letter with
     #     the adjacent map (map+violin = one panel) ---
     violin_configs = [
-        (2, 'sss_ml', 'sss_boot', SSS_YLIM, 'SSS'),
-        (4, 'r0_ml',  'r0_boot',  R0_YLIM,  r'$R_0$'),
+        (2, 'sss_ml', 'sss_boot', sss_lim, 'SSS', 'SSS'),
+        (4, 'r0_ml',  'r0_boot',  r0_lim,  r'$R_0$', 'R_0'),
     ]
-    n_rows = len(visual_order)
-    for col, ml_key, boot_key, ylim, ylabel in violin_configs:
-        for i, (_, label, _, _, _) in enumerate(visual_order):
+    clipped = []
+    for col, ml_key, boot_key, ylim, ylabel, metric in violin_configs:
+        for i, (_, label, _, _, _) in enumerate(loaded):
             ax = fig.add_subplot(gs[i, col])
-            d = clade_data.get(label, {})
-            ml = d.get(ml_key, {})
-            boot = d.get(boot_key, {})
-            if not ml and not boot:
-                ax.axis('off')
-                continue
-            draw_violin(ax, ml, boot, ylim, ylabel,
-                        show_xticks=(i == n_rows - 1))
+            models = [(name, d[label][ml_key], d[label][boot_key])
+                      for name, d in (('STEPHY', clade_data),
+                                      ('CBLV-CNN', cnn_data))]
+            offscale = draw_violin(ax, models, ylim, ylabel,
+                                   show_xticks=(i == len(loaded) - 1))
+            clipped += [(metric, label, *rec) for rec in offscale]
+            if i == 0:
+                add_model_legend(ax)
+
+    report_clipped(clipped)
+    report_out_of_range([('STEPHY', clade_data), ('CBLV-CNN', cnn_data)],
+                        'sss_ml', 'sss_boot', 'SSS', (-1.0, 1.0))
+
+    # --- Scatter row: STEPHY vs the ablation, one per metric (panels l, m) ---
+    paired = {clade: load_paired(base_dir / 'stephy_output', Path(args.cnn_dir),
+                                 clade, ('sss_point', 'r0_point'))
+              for clade in CLADES}
+    ax_scatter = None
+    for slot, column, lim, name, letter in (
+            (0, 'sss_point', sss_lim, 'SSS', 'l'),
+            (1, 'r0_point', r0_lim, r'$R_0$', 'm')):
+        ax = fig.add_subplot(gs_scatter[0, slot])
+        draw_scatter(ax, {c: paired[c][column] for c in CLADES}, lim, name)
+        ax.text(-0.15, 1.0, letter, transform=ax.transAxes, fontsize=14,
+                fontweight='bold', va='top', ha='right')
+        ax_scatter = ax_scatter or ax
 
     # --- Colorbars: width = map column only; fewer ticks for breathing room ---
+    # Seated near the top of the gap between the grid and the scatter row. It
+    # can sit high because it spans a map column, while the rotated region
+    # labels that hang into this gap belong to the violin columns beside it —
+    # they never share an x range. Low placement instead collides with the
+    # scatter panels, whose inset statistics start at their top-left.
     fig.canvas.draw()
-    tree_pos = ax_tree.get_position()
-    sss_map_pos = last_ax[1].get_position()
-    r0_map_pos  = last_ax[3].get_position()
-    cbar_y = tree_pos.y0 - 0.03
+    grid_bottom = ax_tree.get_position().y0
+    scatter_top = ax_scatter.get_position().y1
+    cbar_y = grid_bottom - 0.28 * (grid_bottom - scatter_top)
+    add_colorbar(fig, last_ax[1], cbar_y, SSS_CMAP, sss_norm, sss_lim, 'SSS')
+    add_colorbar(fig, last_ax[3], cbar_y, R0_CMAP, r0_norm, r0_lim, r'$R_0$')
 
-    sm_sss = plt.cm.ScalarMappable(cmap=SSS_CMAP, norm=sss_norm)
-    cbar_ax = fig.add_axes([sss_map_pos.x0 + 0.005, cbar_y,
-                            sss_map_pos.width - 0.01, 0.008])
-    cbar = fig.colorbar(sm_sss, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label('SSS', fontsize=6)
-    cbar.set_ticks([-1, 0, 1])
-    cbar.ax.tick_params(labelsize=5)
-
-    sm_r0 = plt.cm.ScalarMappable(cmap=R0_CMAP, norm=r0_norm)
-    cbar_ax = fig.add_axes([r0_map_pos.x0 + 0.005, cbar_y,
-                            r0_map_pos.width - 0.01, 0.008])
-    cbar = fig.colorbar(sm_r0, cax=cbar_ax, orientation='horizontal')
-    cbar.set_label(r'$R_0$', fontsize=6)
-    cbar.set_ticks([0.8, 2.0, 3.0])
-    cbar.ax.tick_params(labelsize=5)
+    # Clade-shape key for l and m, in one row under both panels so neither
+    # loses width to it. Anchored below the scatter axes with room for their
+    # tick labels and x-label; fill colour is not repeated here, because it is
+    # region and panel a already keys it.
+    fig.legend(
+        handles=[Line2D([0], [0], marker=CLADE_MARKERS[c], color='w',
+                        markerfacecolor='#BBBBBB', markeredgecolor='#333333',
+                        markeredgewidth=0.3, markersize=4,
+                        label=CLADE_LABELS[c]) for c in CLADES],
+        loc='upper center',
+        bbox_to_anchor=(0.5, ax_scatter.get_position().y0 - 0.038),
+        ncol=len(CLADES), frameon=False,
+        handletextpad=0.4, columnspacing=1.6)
 
     out = out_dir / 'fig5.pdf'
     out_png = out_dir / 'fig5.png'
