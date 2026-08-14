@@ -7,9 +7,10 @@ epidemiological parameters from a time-scaled phylogeny. Each location becomes
 a node encoding its own subtree; the model predicts that location's parameters,
 with conformal prediction intervals or sets attached.
 
-This repository supports the research paper *STEPHY: A Graph Neural Inference
-Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral
-Phylogenies*.
+The method is described in the preprint [*Rapid Phylogeographic Inference of
+Regional Epidemic Dynamics for Routine Genomic
+Surveillance*](https://doi.org/10.21203/rs.3.rs-10631496/v1) (Research Square,
+2026; in review).
 
 ## Repository layout
 
@@ -206,6 +207,18 @@ GADM level-1 boundaries for Denmark (`gadm41_DNK_1.json`, from
 [gadm.org](https://gadm.org/download_country.html), placed beside the script),
 and `denmark_sample` needs a local GISAID metadata export. Both scripts exit
 with instructions if the file is missing.
+
+## Citation
+
+If you use STEPHY, cite the preprint:
+
+> *Rapid Phylogeographic Inference of Regional Epidemic Dynamics for Routine
+> Genomic Surveillance.* Research Square, 2026. In review.
+> [10.21203/rs.3.rs-10631496/v1](https://doi.org/10.21203/rs.3.rs-10631496/v1)
+
+The trained weights and the Denmark phylogenetic intermediates carry their own
+DOIs — see [Related resources](#related-resources) — and should be cited
+alongside it when the work reuses them.
 
 ## License
 

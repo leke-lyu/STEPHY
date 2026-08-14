@@ -2,9 +2,10 @@
 
 **DOI: [10.5281/zenodo.21766065](https://doi.org/10.5281/zenodo.21766065)**
 
-Trained model weights and test-set predictions for **STEPHY: A Graph Neural
-Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from
-Large Viral Phylogenies**.
+Trained model weights and test-set predictions for [**Rapid Phylogeographic
+Inference of Regional Epidemic Dynamics for Routine Genomic
+Surveillance**](https://doi.org/10.21203/rs.3.rs-10631496/v1) (Research Square,
+2026; in review).
 
 These artefacts are too large for the code repository but are required to
 regenerate the paper's figures. Unpack this archive anywhere and point the

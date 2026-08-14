@@ -1,7 +1,7 @@
 {
   "title": "STEPHY trained models: simulation benchmarks and the Denmark application",
   "upload_type": "dataset",
-  "description": "<p>Trained model weights, normalisation parameters, held-out test predictions and training histories for <em>STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral Phylogenies</em>.</p><p>Contains the simulation benchmarks (one main 100k-tree experiment, a similar-population-size experiment, and three 5k training-set-size replicates, each with a STEPHY model and a CBLV ablation) together with the heads trained for the Denmark SARS-CoV-2 application. These artefacts are required to regenerate the figures produced by <code>supportingFigures/</code> in the code repository; unpack the archive and set <code>STEPHY_MODELS</code> to the resulting directory.</p><p>SLURM logs, a superseded positional-encoding run, one ablation not reported for the Denmark application, and pre-bugfix backup files are excluded. See the README inside the archive for the directory map, task naming, and which head each paper uses.</p>",
+  "description": "<p>Trained model weights, normalisation parameters, held-out test predictions and training histories for <em>Rapid Phylogeographic Inference of Regional Epidemic Dynamics for Routine Genomic Surveillance</em> (Research Square, 2026, doi:10.21203/rs.3.rs-10631496/v1).</p><p>Contains the simulation benchmarks (one main 100k-tree experiment, a similar-population-size experiment, and three 5k training-set-size replicates, each with a STEPHY model and a CBLV ablation) together with the heads trained for the Denmark SARS-CoV-2 application. These artefacts are required to regenerate the figures produced by <code>supportingFigures/</code> in the code repository; unpack the archive and set <code>STEPHY_MODELS</code> to the resulting directory.</p><p>SLURM logs, a superseded positional-encoding run, one ablation not reported for the Denmark application, and pre-bugfix backup files are excluded. See the README inside the archive for the directory map, task naming, and which head each paper uses.</p>",
   "creators": [
     {
       "name": "Lyu, Leke"
@@ -18,6 +18,11 @@
     "trained models"
   ],
   "related_identifiers": [
+    {
+      "identifier": "10.21203/rs.3.rs-10631496/v1",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-preprint"
+    },
     {
       "identifier": "https://github.com/leke-lyu/STEPHY",
       "relation": "isSupplementTo",
