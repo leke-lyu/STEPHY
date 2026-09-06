@@ -10,7 +10,7 @@ with conformal prediction intervals or sets attached.
 The method is described in the preprint [*Rapid Phylogeographic Inference of
 Regional Epidemic Dynamics for Routine Genomic
 Surveillance*](https://doi.org/10.21203/rs.3.rs-10631496/v1) (Research Square,
-2026; in review).
+2026; currently under review).
 
 ## Repository layout
 
