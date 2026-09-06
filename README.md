@@ -7,9 +7,7 @@ epidemiological parameters from a time-scaled phylogeny. Each location becomes
 a node encoding its own subtree; the model predicts that location's parameters,
 with conformal prediction intervals or sets attached.
 
-The method is described in the preprint [*Rapid Phylogeographic Inference of
-Regional Epidemic Dynamics for Routine Genomic
-Surveillance*](https://doi.org/10.21203/rs.3.rs-10631496/v1) (Research Square,
+The method is described in the preprint [*STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral Phylogenies*](https://www.researchsquare.com/article/rs-10631496/v2) (Research Square,
 2026; currently under review).
 
 ## Repository layout
