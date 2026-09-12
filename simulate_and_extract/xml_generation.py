@@ -59,6 +59,7 @@ CONFIG = {
     'max_gamma_diff': float(get_required_env('MAX_GAMMA_DIFF')),
     'delta_range': (float(get_required_env('DELTA_MIN')), float(get_required_env('DELTA_MAX'))),
     'delta_hetero': float(os.getenv('DELTA_HETERO', '0')),
+    'delta_hetero_time': float(os.getenv('DELTA_HETERO_TIME', '0')),
     'migration_range': (float(get_required_env('MIGRATION_MIN')), float(get_required_env('MIGRATION_MAX'))),
     'shared_migration_rate': str_to_bool(get_required_env('SHARED_MIGRATION_RATE')),
     'sim_time_range': (float(get_required_env('SIM_TIME_MIN')), float(get_required_env('SIM_TIME_MAX'))),
@@ -143,20 +144,32 @@ def recovery_rate(num_locs, gamma_range, shared=False, max_diff=None):
 
     return gamma_values
 
-def sample_rate(num_locs, delta_range, hetero=0.0):
-    """Generate sampling rates. Returns (baseline, per-location array).
+def sample_rate(num_locs, delta_range, hetero=0.0, hetero_time=0.0):
+    """Generate sampling rates. Returns (baseline x, matrix of shape
+    (num_locs, num_phases)) — row i is location i, column k is time phase k.
 
-    hetero = 0 (default): one rate x ~ U(delta_range) shared by every location.
-    hetero = h > 0: each location gets x * u_i with u_i ~ U(1-h, 1+h). The
-    baseline range is shrunk to [min/(1-h), max/(1+h)] so every per-location
-    rate still falls inside delta_range.
+    Default (both 0): one rate x ~ U(delta_range) shared by every location,
+    constant in time -> shape (num_locs, 1).
+    hetero = h > 0 (spatial): location i gets x * u_i, u_i ~ U(1-h, 1+h).
+    hetero_time = h > 0 (temporal): every location shares three successive
+    phases x*(1-h), x, x*(1+h) over equal thirds of the simulation time.
+    In either case the baseline range is shrunk to [min/(1-h), max/(1+h)] so
+    every rate still falls inside delta_range. The two modes are exclusive.
     """
+    if hetero > 0 and hetero_time > 0:
+        raise ValueError('DELTA_HETERO and DELTA_HETERO_TIME cannot both be set')
     lo, hi = delta_range
-    if hetero <= 0:
-        x = np.random.uniform(lo, hi)
-        return x, np.full(num_locs, x)
-    x = np.random.uniform(lo / (1 - hetero), hi / (1 + hetero))
-    return x, x * np.random.uniform(1 - hetero, 1 + hetero, size=num_locs)
+    h = max(hetero, hetero_time)
+    x = np.random.uniform(lo / (1 - h), hi / (1 + h))
+    if hetero > 0:
+        return x, (x * np.random.uniform(1 - h, 1 + h, size=num_locs))[:, None]
+    if hetero_time > 0:
+        return x, np.tile(x * np.array([1 - h, 1.0, 1 + h]), (num_locs, 1))
+    return x, np.full((num_locs, 1), x)
+
+def phase_change_times(sim_time, num_phases):
+    """Forward-time boundaries splitting sim_time into num_phases equal parts."""
+    return [sim_time * k / num_phases for k in range(1, num_phases)]
 
 def migration_rates(num_locs, migration_range, shared=False):
     """Generate migration rate matrix. Diagonal is 0 (no self-migration)."""
@@ -191,8 +204,16 @@ def simulation_time(gamma_values, sim_time_range, time_units='recovery_period'):
 
 def save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values, delta_value,
                         delta_values, beta_value, migration_rates_data, sim_time, output_file):
-    """Save all generated epidemic parameters to a CSV file."""
+    """Save all generated epidemic parameters to a CSV file.
+
+    delta_values / beta_value are (num_locs, num_phases) matrices. `sample_rate`
+    always holds the baseline x. Spatial heterogeneity adds sample_rate_loc_{i};
+    temporal heterogeneity adds sample_rate_phase_{k} (phase boundaries are
+    simulation_time * k/num_phases). beta_loc_{i} is the phase where δ == x.
+    """
     num_locs = len(pop_sizes)
+    num_phases = delta_values.shape[1]
+    ref_phase = int(np.argmin(np.abs(delta_values[0] - delta_value)))
     seed_loc_idx = np.argmax(seed_number)
 
     data = {}
@@ -214,14 +235,17 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values, delta_va
     for i, gamma in enumerate(gamma_values):
         data[f'recovery_rate_loc_{i}'] = [gamma]
 
-    # Sample rate: baseline x, plus per-location rates when heterogeneous
+    # Sample rate: baseline x, plus per-location / per-phase rates when heterogeneous
     data['sample_rate'] = [delta_value]
-    if not np.all(delta_values == delta_value):
-        for i, delta in enumerate(delta_values):
+    if num_phases == 1 and not np.all(delta_values == delta_value):
+        for i, delta in enumerate(delta_values[:, 0]):
             data[f'sample_rate_loc_{i}'] = [delta]
+    if num_phases > 1:
+        for k, delta in enumerate(delta_values[0]):
+            data[f'sample_rate_phase_{k}'] = [delta]
 
-    # Transmission rates (beta)
-    for i, beta in enumerate(beta_value):
+    # Transmission rates (beta) at the baseline sampling rate
+    for i, beta in enumerate(beta_value[:, ref_phase]):
         data[f'beta_loc_{i}'] = [beta]
 
     # Migration rates
@@ -240,10 +264,25 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values, delta_va
 # XML GENERATION
 # ============================================================
 
+def _rate_attr(rates, change_times):
+    """Reaction rate attribute(s): a single rate, or a piecewise-constant list
+    with the ReMaster changeTimes at which it switches."""
+    rates = np.atleast_1d(rates)
+    if len(rates) == 1:
+        return f'rate="{rates[0]}"'
+    return (f'rate="{" ".join(map(str, rates))}" '
+            f'changeTimes="{" ".join(map(str, change_times))}"')
+
 def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_values,
                  migration_rates_data, sim_time, num_sims, ends_when, output_file):
-    """Generate BEAST2/ReMaster XML configuration file with SIR reactions."""
+    """Generate BEAST2/ReMaster XML configuration file with SIR reactions.
+
+    beta_value / delta_values are (num_locs, num_phases); with more than one
+    phase the infection and sampling reactions switch rate at equal thirds
+    of sim_time.
+    """
     num_pops = len(pop_sizes)
+    change_times = phase_change_times(sim_time, delta_values.shape[1])
 
     xml_lines = [
         '<beast version="2.0" namespace="beast.base.inference:beast.base.inference.parameter:remaster">',
@@ -259,7 +298,7 @@ def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_values,
 
     # Infection reactions
     for i in range(num_pops):
-        xml_lines.append(f'        <reaction spec="Reaction" rate="{beta_value[i]}"> S[{i}] + I[{i}] -> 2I[{i}] </reaction>')
+        xml_lines.append(f'        <reaction spec="Reaction" {_rate_attr(beta_value[i], change_times)}> S[{i}] + I[{i}] -> 2I[{i}] </reaction>')
 
     # Recovery reactions
     for i in range(num_pops):
@@ -267,7 +306,7 @@ def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_values,
 
     # Sampling reactions
     for i in range(num_pops):
-        xml_lines.append(f'        <reaction spec="Reaction" rate="{delta_values[i]}"> I[{i}] -> R + sample </reaction>')
+        xml_lines.append(f'        <reaction spec="Reaction" {_rate_attr(delta_values[i], change_times)}> I[{i}] -> R + sample </reaction>')
 
     # Migration reactions
     for i in range(num_pops):
@@ -326,10 +365,12 @@ def generate_parameters(config):
     )
 
     delta_value, delta_values = sample_rate(
-        config['num_locs'], config['delta_range'], config['delta_hetero'],
+        config['num_locs'], config['delta_range'],
+        config['delta_hetero'], config['delta_hetero_time'],
     )
 
-    beta_value = R0_array * (gamma_values + delta_values) / pop_sizes
+    # (num_locs, num_phases): beta follows delta phase by phase so R0 stays exact
+    beta_value = (R0_array * (gamma_values[:, None] + delta_values).T / pop_sizes).T
 
     migration_rates_data = migration_rates(
         config['num_locs'], config['migration_range'],

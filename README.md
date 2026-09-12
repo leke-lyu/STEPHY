@@ -75,8 +75,11 @@ Besides the benchmark engine above, `simulate_and_extract/` carries
 spread), `_shift_X1/_X2/_X3.sh`, which scale populations ×1/×2/×3 while
 scaling the sampling rate δ inversely to hold tree size roughly constant, and
 `_heterogeneous_sampling_a_DELTA_{0.1,0.3,0.5}.sh`, which give each location
-its own δ, spread ±10/30/50 % around a shared baseline drawn so every value
-stays within the training range.
+its own δ, spread ±10/30/50 % around a shared baseline, and
+`_heterogeneous_sampling_b_DELTA_{0.1,0.3,0.5}.sh`, which instead step the
+shared δ through −10/30/50 %, baseline, +10/30/50 % over equal thirds of the
+run. In both the baseline is drawn so every value stays within the training
+range.
 
 Either engine parallelises over SLURM:
 
