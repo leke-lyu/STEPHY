@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Response figure 0 — model misspecification tests (3-row, 4-column layout).
+Model misspecification tests (4-row, 4-column layout).
 
 The 100k model is trained on outbreaks whose sampling rate delta is shared by
-all 12 locations and constant in time, on a fixed population scale. Each row
-evaluates that model, unchanged, on a test set that violates one of those
-assumptions, at three levels of severity. Same layout and metric as fig3.py
-Row 3 (c-f): per-task headline score (R2 for regression, accuracy for
-classification), one line per pipeline.
+all 12 locations and constant in time, on a fixed population scale, seeded
+from a single location. Each row evaluates that model, unchanged, on a test
+set that violates one of those assumptions, at three levels of severity. Same
+layout and metric as fig3.py Row 3 (c-f): per-task headline score (R2 for
+regression, accuracy for classification), one line per pipeline.
 
   Row 1 (a-d): delta varies across regions — location i samples at
                x * U(1-h, 1+h), h = 0.1 / 0.3 / 0.5.
@@ -15,12 +15,16 @@ classification), one line per pipeline.
                x(1-h) -> x -> x(1+h) over equal thirds of the outbreak.
   Row 3 (i-l): population shift — every location's population scaled by
                1x / 2x / 3x (the same data as fig3.py Row 3).
+  Row 4 (m-o): multiple introductions — k = 2 / 3 / 4 locations each seeded
+               with one infected at t = 0. Regression targets only: the
+               ancestral state (MRCA of all sampled tips) lies outside the
+               modelled locations, so that cell carries the legend instead.
 
-Per-level scores are printed as a table and teed to response_0.out.
+Per-level scores are printed as a table and teed to misspecification_tests.out.
 
 Usage:
-    python3 response_0.py
-    python3 response_0.py --gen_root /path/to/dir_holding_5k_result_dirs
+    python3 misspecification_tests.py
+    python3 misspecification_tests.py --gen_root /path/to/dir_holding_5k_result_dirs
 """
 
 import os
@@ -75,7 +79,7 @@ TARGET_LABELS = {
     'reg_r0':  r'$R_0$ (Reg.)',
     'reg_rr':  r'$\gamma$ (Reg.)',
     'reg_sss': 'SSS (Reg.)',
-    'cls_as':  'Index Location (Cls.)',
+    'cls_as':  'Ancestral state (Cls.)',
 }
 IS_CLASSIFICATION = {
     'reg_r0': False, 'reg_rr': False,
@@ -89,35 +93,46 @@ PRED_COLS = {
 }
 
 # -- Misspecification tests --------------------------------------------------
-# One entry per row: (row label, x-axis label, levels, dir template).
+# One entry per row: (row label, x-axis label, levels, dir template, targets).
 # Levels are strings so they can be both formatted into the directory name
-# and used verbatim as tick labels.
+# and used verbatim as tick labels. `targets` lists the columns a row can be
+# scored on; a column missing from it is left blank (no axes, no letter).
 
 HETERO_LEVELS = ['0.1', '0.3', '0.5']
 SHIFT_LEVELS = ['X1', 'X2', 'X3']
+SEED_LEVELS = ['2', '3', '4']
+REGRESSION_TARGETS = [t for t in TARGETS if not IS_CLASSIFICATION[t]]
 
 TESTS = [
     ('Sampling rate varies\nacross regions',
      r'Heterogeneity $h$', HETERO_LEVELS,
-     '5k_diverse_population_heterogeneous_sampling_a_{level}_result'),
+     '5k_diverse_population_heterogeneous_sampling_a_{level}_result', TARGETS),
     ('Sampling rate varies\nover time',
      r'Heterogeneity $h$', HETERO_LEVELS,
-     '5k_diverse_population_heterogeneous_sampling_b_{level}_result'),
+     '5k_diverse_population_heterogeneous_sampling_b_{level}_result', TARGETS),
     ('Population shift',
      'Population scale', SHIFT_LEVELS,
-     '5k_diverse_population_shift_{level}_result'),
+     '5k_diverse_population_shift_{level}_result', TARGETS),
+    # Under multiple introductions the MRCA of the sampled tips is the
+    # unsampled external origin, not a modelled location, so the
+    # ancestral-state label is undefined and cls_as is not scored.
+    ('Multiple\nintroductions',
+     r'Seeded locations $k$', SEED_LEVELS,
+     '5k_diverse_population_index_loc_{level}_result', REGRESSION_TARGETS),
 ]
+# Text shown in the one cell that has no defined score (row 4, cls_as).
+UNDEFINED_NOTE = 'Ancestral state not defined\nunder multiple introductions'
 
 # One y-range for every panel (same as fig3.py Row 3), so a drop reads the
-# same in every row and against fig3. The lowest score across all nine test
-# sets is 0.63 (CBLV-CNN SSS at X3), so nothing is clipped.
+# same in every row and against fig3. The lowest score across all twelve
+# test sets is 0.63 (CBLV-CNN SSS at X3), so nothing is clipped.
 YLIM = (0.5, 1.0)
 
 
 # -- stdout tee — score table saved next to the script -----------------------
 
 class _Tee:
-    """Mirror writes across multiple streams (tees stdout to response_0.out)."""
+    """Mirror writes across multiple streams (tees stdout to misspecification_tests.out)."""
     def __init__(self, *streams): self.streams = streams
     def write(self, x):
         for s in self.streams: s.write(x)
@@ -151,17 +166,18 @@ def compute_score(target, true_vals, pred_vals):
     return float(r2_score(t, p))
 
 
-def load_test_scores(gen_root, levels, dir_tpl):
+def load_test_scores(gen_root, levels, dir_tpl, targets):
     """For one test: {target: {pipeline: [score per level]}}.
 
-    Missing (level, pipeline) entries are stored as None and reported.
+    Only `targets` are scored. Missing (level, pipeline) entries are stored
+    as None and reported.
     """
-    out = {t: {p: [None] * len(levels) for p in PIPELINES} for t in TARGETS}
+    out = {t: {p: [None] * len(levels) for p in PIPELINES} for t in targets}
     for i, level in enumerate(levels):
         level_root = os.path.join(gen_root, dir_tpl.format(level=level))
         for pipeline in PIPELINES:
             pdir = os.path.join(level_root, pipeline)
-            for target in TARGETS:
+            for target in targets:
                 score = compute_score(target, *load_predictions(target, pdir))
                 if score is None:
                     print(f'  missing: {pdir}/{target}/test_predictions.csv')
@@ -186,7 +202,7 @@ def print_score_table(row_label, levels, scores):
     header = f'  {"target":<8} {"pipeline":<9}' + ''.join(
         f'{lvl:>8}' for lvl in levels)
     print(header)
-    for target in TARGETS:
+    for target in scores:
         for pipeline in PIPELINES:
             vals = scores[target][pipeline]
             cells = ''.join('     n/a' if v is None else f'{v:8.3f}'
@@ -199,39 +215,53 @@ def print_score_table(row_label, levels, scores):
 def main():
     """
     Build the misspecification figure — per-task headline score of both
-    pipelines under three violated training assumptions, each at three
-    severities. Output: response_0.{pdf,png,out} alongside this script.
+    pipelines under four violated training assumptions, each at three
+    severities. Output: misspecification_tests.{pdf,png,out} alongside this script.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--gen_root', type=str,
                         default=under('models', 'simu'),
-                        help='Parent dir holding the nine 5k_diverse_population_'
+                        help='Parent dir holding the twelve 5k_diverse_population_'
                              '{heterogeneous_sampling_{a,b}_{0.1,0.3,0.5},'
-                             'shift_{X1,X2,X3}}_result/ dirs')
+                             'shift_{X1,X2,X3},index_loc_{2,3,4}}_result/ dirs')
     args = parser.parse_args()
 
     out_dir = os.path.dirname(os.path.abspath(__file__))
-    _log = open(os.path.join(out_dir, 'response_0.out'), 'w')
+    _log = open(os.path.join(out_dir, 'misspecification_tests.out'), 'w')
     sys.stdout = _Tee(sys.__stdout__, _log)
 
     print(f'gen_root = {args.gen_root}')
-    all_scores = [load_test_scores(args.gen_root, levels, dir_tpl)
-                  for _, _, levels, dir_tpl in TESTS]
+    all_scores = [load_test_scores(args.gen_root, levels, dir_tpl, targets)
+                  for _, _, levels, dir_tpl, targets in TESTS]
 
     # -- Figure layout: one row per test, one column per target --------------
     n_rows, n_cols = len(TESTS), len(TARGETS)
     # Width sized so the bbox-trimmed PDF clears Nature's 183 mm cap (the
-    # rotated row labels at left add to the trim).
-    fig = plt.figure(figsize=(8.15, 7.35))
+    # rotated row labels at left add to the trim); height keeps the panels
+    # square and the trimmed page under the 247 mm cap.
+    fig = plt.figure(figsize=(8.15, 9.55))
     gs = gridspec.GridSpec(n_rows, n_cols, figure=fig,
                            hspace=0.40, wspace=0.35)
     pipeline_handles = make_pipeline_handles()
 
     panel_idx = 0
-    for row, ((row_label, xlabel, levels, _), scores) in enumerate(
+    for row, ((row_label, xlabel, levels, _, targets), scores) in enumerate(
             zip(TESTS, all_scores)):
         level_x = np.arange(len(levels))
         for col, target in enumerate(TARGETS):
+            if target not in targets:
+                # Undefined cell: no axes, no letter; carries the pipeline
+                # legend and a one-line reason instead.
+                ax = fig.add_subplot(gs[row, col])
+                ax.set_box_aspect(1)
+                ax.axis('off')
+                ax.legend(handles=pipeline_handles, loc='center',
+                          bbox_to_anchor=(0.5, 0.6), frameon=False,
+                          fontsize=7, handlelength=2.0)
+                ax.text(0.5, 0.3, UNDEFINED_NOTE, transform=ax.transAxes,
+                        fontsize=6.5, color='0.45', ha='center', va='center',
+                        linespacing=1.4)
+                continue
             ax = fig.add_subplot(gs[row, col])
             is_cls = IS_CLASSIFICATION[target]
 
@@ -257,10 +287,13 @@ def main():
             ax.set_ylim(YLIM)
             ax.set_box_aspect(1)
             ax.set_xlabel(xlabel, fontsize=8)
-            ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=8)
+            # The y-range is shared, so label it once per metric: R2 on the
+            # first column, accuracy on the classification column.
+            if col == 0 or is_cls:
+                ax.set_ylabel('Accuracy' if is_cls else r'R$^2$', fontsize=8)
             if row == 0:
                 ax.set_title(TARGET_LABELS[target], fontsize=9,
-                             fontweight='bold')
+                             fontweight='bold', pad=10)
             if col == 0:
                 ax.text(-0.45, 0.5, row_label, transform=ax.transAxes,
                         fontsize=8, fontweight='bold', rotation=90,
@@ -272,14 +305,11 @@ def main():
                     va='bottom', ha='left')
             panel_idx += 1
 
-    fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=7, bbox_to_anchor=(0.5, 0.02))
-
-    for (row_label, _, levels, _), scores in zip(TESTS, all_scores):
+    for (row_label, _, levels, _, _), scores in zip(TESTS, all_scores):
         print_score_table(row_label, levels, scores)
 
-    out_pdf = os.path.join(out_dir, 'response_0.pdf')
-    out_png = os.path.join(out_dir, 'response_0.png')
+    out_pdf = os.path.join(out_dir, 'misspecification_tests.pdf')
+    out_png = os.path.join(out_dir, 'misspecification_tests.png')
     fig.savefig(out_pdf, bbox_inches='tight')
     fig.savefig(out_png, bbox_inches='tight', dpi=600)
     print(f'Saved: {out_pdf}')
