@@ -51,6 +51,7 @@ CONFIG = {
     'pop_range': (int(get_required_env('POP_MIN')), int(get_required_env('POP_MAX'))),
     'shared_pop_size': str_to_bool(get_required_env('SHARED_POP_SIZE')),
     'seed_location': str_to_int_or_none(get_required_env('SEED_LOCATION')),
+    'num_seed_locations': int(os.getenv('NUM_SEED_LOCATIONS', '1')),
     'R0_range': (float(get_required_env('R0_MIN')), float(get_required_env('R0_MAX'))),
     'shared_R0': str_to_bool(get_required_env('SHARED_R0')),
     'max_R0_diff': float(get_required_env('MAX_R0_DIFF')),
@@ -110,9 +111,19 @@ def population_sizes(num_locs, pop_range, shared=False):
 
     return pop_sizes.astype(int)
 
-def seed_location(num_locs, seed_loc=None):
-    """Generate one-hot encoded seed location (where epidemic starts)."""
+def seed_location(num_locs, seed_loc=None, num_seeds=1):
+    """Generate the seed vector (where the epidemic starts).
+
+    One-hot for a single seed. With num_seeds > 1 (multi-seed stress test),
+    num_seeds distinct random locations each receive one infected.
+    """
     seed_array = np.zeros(num_locs, dtype=int)
+
+    if num_seeds > 1:
+        if seed_loc is not None:
+            raise ValueError('SEED_LOCATION must be "None" when NUM_SEED_LOCATIONS > 1')
+        seed_array[np.random.choice(num_locs, num_seeds, replace=False)] = 1
+        return seed_array
 
     if seed_loc is None:
         selected_location = np.random.randint(0, num_locs)
@@ -210,11 +221,12 @@ def save_parameters_csv(pop_sizes, seed_number, R0_array, gamma_values, delta_va
     always holds the baseline x. Spatial heterogeneity adds sample_rate_loc_{i};
     temporal heterogeneity adds sample_rate_phase_{k} (phase boundaries are
     simulation_time * k/num_phases). beta_loc_{i} is the phase where δ == x.
+    seed_location_index lists every seeded location, ';'-separated.
     """
     num_locs = len(pop_sizes)
     num_phases = delta_values.shape[1]
     ref_phase = int(np.argmin(np.abs(delta_values[0] - delta_value)))
-    seed_loc_idx = np.argmax(seed_number)
+    seed_loc_idx = ';'.join(map(str, np.flatnonzero(seed_number)))
 
     data = {}
 
@@ -280,9 +292,17 @@ def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_values,
     beta_value / delta_values are (num_locs, num_phases); with more than one
     phase the infection and sampling reactions switch rate at equal thirds
     of sim_time.
+
+    With more than one seed, the infected are not placed in I directly:
+    ReMaster needs a single-rooted tree and would discard all but one seed
+    lineage. Instead an unsampled origin X introduces one infected into each
+    seeded location at t = 0, so the tree root is X with one child clade per
+    surviving introduction.
     """
     num_pops = len(pop_sizes)
     change_times = phase_change_times(sim_time, delta_values.shape[1])
+    multi_seed = seed_number.sum() > 1
+    initial_I = np.zeros_like(seed_number) if multi_seed else seed_number
 
     xml_lines = [
         '<beast version="2.0" namespace="beast.base.inference:beast.base.inference.parameter:remaster">',
@@ -290,11 +310,18 @@ def generate_xml(pop_sizes, seed_number, beta_value, gamma_values, delta_values,
         '    <simulate id="tree" spec="SimulatedTree">',
         f'      <trajectory id="trajectory" spec="StochasticTrajectory" maxTime="{sim_time}" endsWhen="{ends_when}">',
         '      	',
-        f'        <population spec="RealParameter" id="S" value="{" ".join(map(str, pop_sizes - seed_number))}"/>',
-        f'        <population spec="RealParameter" id="I" value="{" ".join(map(str, seed_number))}"/>',
+        f'        <population spec="RealParameter" id="S" value="{" ".join(map(str, pop_sizes - initial_I))}"/>',
+        f'        <population spec="RealParameter" id="I" value="{" ".join(map(str, initial_I))}"/>',
         f'        <population spec="RealParameter" id="R" value="0"/>',
         f'        <samplePopulation spec="RealParameter" id="sample" value="0"/>',
     ]
+
+    if multi_seed:
+        seeded = ' + '.join(f'I[{i}]' for i in np.flatnonzero(seed_number))
+        xml_lines += [
+            '        <population spec="RealParameter" id="X" value="1"/>',
+            f'        <reaction spec="PunctualReaction" n="1" times="0"> X -> X + {seeded} </reaction>',
+        ]
 
     # Infection reactions
     for i in range(num_pops):
@@ -352,6 +379,7 @@ def generate_parameters(config):
 
     seed_number = seed_location(
         config['num_locs'], config['seed_location'],
+        config['num_seed_locations'],
     )
 
     R0_array = R0_values(

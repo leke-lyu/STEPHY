@@ -80,6 +80,10 @@ its own δ, spread ±10/30/50 % around a shared baseline, and
 shared δ through −10/30/50 %, baseline, +10/30/50 % over equal thirds of the
 run. In both the baseline is drawn so every value stays within the training
 range.
+`_index_loc_{2,3,4}.sh` seed the outbreak in 2, 3 or 4 distinct locations at
+once, each introduced from an unsampled origin so the tree stays single-rooted;
+the ancestral-state target has no single answer there, so only the three
+regression targets are evaluated.
 
 Either engine parallelises over SLURM:
 

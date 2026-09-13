@@ -85,10 +85,12 @@ def _convert_annotation(match):
     """Convert a BEAST2 annotation ``[&I{n} time=t ...]`` to ``__LOCn``.
 
     This embeds the location directly into the node label so that treeswift
-    (which discards ``[&...]`` comment blocks) can still access it.
+    (which discards ``[&...]`` comment blocks) can still access it. The
+    unsampled origin ``X`` of the multi-seed engine has no location and
+    becomes ``__ORIGIN``.
     """
-    loc = re.search(r'I\{(\d+)\}', match.group(0)).group(1)
-    return f'__LOC{loc}'
+    loc = re.search(r'I\{(\d+)\}', match.group(0))
+    return f'__LOC{loc.group(1)}' if loc else '__ORIGIN'
 
 
 def read_newick(filepath):
@@ -116,6 +118,9 @@ def extract_ancestral_labels(newick):
     tips (accounting for single-child migration nodes on the stem), and
     returns ``{location: 1}`` for the MRCA location and ``0`` for all others.
 
+    If that MRCA is the multi-seed origin ``X`` there is no single ancestral
+    location, and every location gets 0.
+
     Returns:
         dict[int, int]: Mapping of location ID to Ancestral_State (0 or 1).
     """
@@ -132,9 +137,11 @@ def extract_ancestral_labels(newick):
     # MRCA of all sampled tips gives the ancestral (spillover) location.
     leaf_labels = {leaf.label for leaf in tree.traverse_leaves()}
     mrca = tree.mrca(leaf_labels)
-    mrca_loc = int(re.search(r'__LOC(\d+)', mrca.label).group(1))
+    mrca_loc = re.search(r'__LOC(\d+)', mrca.label)
+    if mrca_loc is None:
+        return {loc: 0 for loc in locations}
 
-    return {loc: int(loc == mrca_loc) for loc in locations}
+    return {loc: int(loc == int(mrca_loc.group(1))) for loc in locations}
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +193,11 @@ def load_trajectory(traj_file):
         .alias('species')
     )
     # -- Convert to pandas for downstream compatibility --
+    # A punctual reaction (multi-seed introductions at t = 0) logs a second
+    # snapshot at the same t; keep the later, post-event one.
     return (
-        df.pivot(on='species', index=['Sample', 't'], values='value')
+        df.pivot(on='species', index=['Sample', 't'], values='value',
+                 aggregate_function='last')
         .fill_null(0)
         .to_pandas()
     )
