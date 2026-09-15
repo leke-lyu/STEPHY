@@ -113,6 +113,9 @@ def summarise(df, name, cap, min_share):
     by_time = df[df['ended_by'] == 'max_time']
 
     print(f'\n=== {name}  ({n} trees) ===')
+    if len(phase_cols) < 2:
+        print('WARNING: no sample_rate_phase_* columns in the parameter CSVs. These runs '
+              'used a constant δ (no time-varying sampling); phase numbers below are moot.')
     stopped_in = ' | '.join(f'{k}: {int((by_cap["phases_reached"] == k).sum())}'
                            for k in range(1, len(phase_cols) + 1))
     print(f'{f"Stopped by size ({cap} tips):":<30}{_pct(len(by_cap), n):<16} cap hit in phase {stopped_in}')
