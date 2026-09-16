@@ -37,8 +37,8 @@ if [ -z "$SLURM_JOB_ID" ]; then
 fi
 
 # Sanity check: STEPHY_ROOT must point to the repo, not the SLURM spool dir.
-if [ ! -f "${STEPHY_ROOT}/supportingFigures/denmark_stephy_inference.py" ]; then
-    echo "ERROR: cannot find denmark_stephy_inference.py at ${STEPHY_ROOT}/supportingFigures/" >&2
+if [ ! -f "${STEPHY_ROOT}/supportingFigures/old_denmark_stephy_inference.py" ]; then
+    echo "ERROR: cannot find old_denmark_stephy_inference.py at ${STEPHY_ROOT}/supportingFigures/" >&2
     echo "  STEPHY_ROOT resolved to: ${STEPHY_ROOT}" >&2
     echo "  This usually means you ran 'sbatch ...' instead of 'bash ...'." >&2
     echo "  Re-run with:  bash supportingFigures/submit_denmark_inference.sh" >&2
@@ -54,7 +54,7 @@ echo "Job ${SLURM_JOB_ID} on $(hostname)"
 echo "  input_dir = ${INPUT_DIR}"
 echo "  model_dir = ${MODEL_DIR}"
 
-python3 "${STEPHY_ROOT}/supportingFigures/denmark_stephy_inference.py" \
+python3 "${STEPHY_ROOT}/supportingFigures/old_denmark_stephy_inference.py" \
     --input_dir "$INPUT_DIR" \
     --model_dir "$MODEL_DIR" \
     --clades   20I,21I,21J,21K,21L \

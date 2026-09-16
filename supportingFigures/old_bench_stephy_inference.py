@@ -13,6 +13,14 @@ For each label, the script:
 
 All timing is single-threaded (torch.set_num_threads(1)) with batch=1 to
 report honest per-tree latency suitable for a Methods section.
+
+Runs on the cluster (see submit_bench_inference.sh); the defaults are cluster
+paths because batch_*_graphs.pt are not synced locally.
+
+Usage:
+    python3 bench_stephy_inference.py
+    python3 bench_stephy_inference.py --graphs_dir /path/to/100k_result \
+        --model_dir /path/to/100k_result/stephy
 """
 
 import argparse

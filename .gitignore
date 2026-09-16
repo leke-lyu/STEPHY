@@ -14,6 +14,7 @@ CBLV-GAT/
 supportingFigures/*.pdf
 supportingFigures/*.png
 supportingFigures/*.out
+supportingFigures/*.csv
 
 # GADM boundaries used by fig4.py. Free for academic use but redistribution
 # is not permitted, so the file is kept locally and downloaded per-machine

@@ -119,7 +119,7 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--result_dir', type=str,
-                        default=under('models', 'simu', '100k_diverse_population_result'),
+                        default=under('models', 'simulation_benchmark', '100k_diverse_population_result'),
                         help='100k result root containing {pipeline}/reg_sss/test_predictions.csv')
     args = parser.parse_args()
     result_dir = args.result_dir
@@ -156,7 +156,7 @@ def main():
             miss1_accs[p].append((overlaps >= max(k - 1, 1)).mean())
 
     # -- Figure layout -------------------------------------------------------
-    fig = plt.figure(figsize=(8.45, 5.4))
+    fig = plt.figure(figsize=(7.9, 5.05))
     gs = gridspec.GridSpec(2, 4, figure=fig, height_ratios=[1, 1],
                            hspace=0.30, wspace=0.35)
     pipeline_handles = make_pipeline_handles()
@@ -195,8 +195,10 @@ def main():
     ax_a.set_ylim(-0.02, 1.08)
     ax_a.grid(True, alpha=0.3)
     ax_a.set_axisbelow(True)
+    # Lower right is the only corner clear of both the solid lines (top)
+    # and the dashed exact-match lines (0.2-0.35 on the right).
     ax_a.legend(handles=pipeline_handles + style_handles,
-                loc='upper right', ncol=4, fontsize=7)
+                loc='lower right', ncol=4, fontsize=7)
     ax_a.text(-0.04, 1.02, 'a', transform=ax_a.transAxes,
               fontsize=14, fontweight='bold', va='bottom', ha='left')
 
@@ -238,9 +240,6 @@ def main():
     ax_b.set_axisbelow(True)
     ax_b.text(-0.04, 1.02, 'b', transform=ax_b.transAxes,
               fontsize=14, fontweight='bold', va='bottom', ha='left')
-
-    fig.legend(handles=pipeline_handles, loc='lower center', frameon=False,
-               ncol=len(PIPELINES), fontsize=7, bbox_to_anchor=(0.5, 0.01))
 
     out_dir = os.path.dirname(os.path.abspath(__file__))
     out_pdf = os.path.join(out_dir, 'sss_ranking.pdf')

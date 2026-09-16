@@ -9,7 +9,7 @@ figure is produced per pipeline (STEPHY and CBLV-CNN).
 
   Rows:    X1 (1x), X2 (2x), X3 (3x) population scale
   Cols:    reg_r0, reg_rr, reg_sss, cls_as
-  Source:  {gen_root}/5k_diverse_population_{X}_result/{pipeline}/{label}/test_predictions.csv
+  Source:  {gen_root}/5k_diverse_population_shift_{X}_result/{pipeline}/{label}/test_predictions.csv
   Output:  population_shift_scatter_{stephy,cblv-cnn}.{pdf,png}
 
 Usage:
@@ -85,7 +85,7 @@ SCALES = ['X1', 'X2', 'X3']
 SCALE_LABELS = {'X1': '1x population',
                 'X2': '2x population',
                 'X3': '3x population'}
-SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
+SCALE_DIR_TPL = '5k_diverse_population_shift_{scale}_result'
 
 # Pipelines to render (subdir name -> output-filename suffix)
 PIPELINES = ['stephy', 'CBLV-CNN']
@@ -192,7 +192,7 @@ def build_figure(gen_root, pipeline):
                         rotation=90, va='center', ha='center')
 
             ax.text(-0.15, 1.02, chr(ord('a') + panel_idx),
-                    transform=ax.transAxes, fontsize=9, fontweight='bold',
+                    transform=ax.transAxes, fontsize=14, fontweight='bold',
                     va='bottom', ha='left')
             panel_idx += 1
 
@@ -211,8 +211,8 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--gen_root', type=str,
-                        default=under('models', 'simu'),
-                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
+                        default=under('models', 'simulation_benchmark', 'misspecification'),
+                        help='Parent dir holding 5k_diverse_population_shift_{X1,X2,X3}_result/')
     args = parser.parse_args()
 
     out_dir = os.path.dirname(os.path.abspath(__file__))

@@ -64,7 +64,7 @@ TARGET_LABELS = {
     'reg_r0':  r'$R_0$ (Reg.)',
     'reg_rr':  r'$\gamma$ (Reg.)',
     'reg_sss': 'SSS (Reg.)',
-    'cls_as':  'Index Location (Cls.)',
+    'cls_as':  'Ancestral state (Cls.)',
 }
 IS_CLASSIFICATION = {
     'reg_r0': False, 'reg_rr': False,
@@ -84,7 +84,7 @@ VIOLIN_R0_COLOR = '#6baed6'
 GAP_COLOR = '#fc8d59'
 
 SCALES = ['X1', 'X2', 'X3']
-SCALE_DIR_TPL = '5k_diverse_population_{scale}_result'
+SCALE_DIR_TPL = '5k_diverse_population_shift_{scale}_result'
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -178,11 +178,11 @@ def main():
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--result_dir', type=str,
-                        default=under('models', 'simu', '100k_diverse_population_result'),
+                        default=under('models', 'simulation_benchmark', '100k_diverse_population_result'),
                         help='100k result root containing {pipeline}/{label}/test_predictions.csv')
     parser.add_argument('--gen_root', type=str,
-                        default=under('models', 'simu'),
-                        help='Parent dir holding 5k_diverse_population_{X1,X2,X3}_result/')
+                        default=under('models', 'simulation_benchmark', 'misspecification'),
+                        help='Parent dir holding 5k_diverse_population_shift_{X1,X2,X3}_result/')
     args = parser.parse_args()
     result_dir = args.result_dir
     gen_root = args.gen_root

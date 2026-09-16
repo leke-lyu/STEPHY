@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
 """
-SSS diagnostics (after training) — what does the true Source/Sink Score
-actually track on the GNN's test split, and does the trained model beat
-the simulation-parameter oracles?
+SSS diagnostics (after training) — what does the true Source/Sink Score track
+on the test split, and does the trained model beat the simulation-parameter
+oracles?
 
 Predictors, ranked per graph against true_reg_sss:
 
-  A  R0                 (sim param; per-location, from {batch}/{sim_id}_nf.csv)
-  B  MigIdx             (sim param; (outflow−inflow)/(outflow+inflow)
-                         from {batch}/{sim_id}_parameter.csv;
-                         same sign convention as SSS)
-  C  Initial_Population (sim param; from {batch}/{sim_id}_nf.csv)
-  D  pred_reg_sss       (the GNN's prediction; only shown with
-                         --prediction_result)
+  A  R0                  per location, from {batch}/{sim_id}_nf.csv
+  B  MigIdx              (outflow - inflow) / (outflow + inflow) from the
+                         migration matrix in {batch}/{sim_id}_parameter.csv;
+                         same sign convention as SSS (+1 source, -1 sink)
+  C  Initial_Population  per location, from {batch}/{sim_id}_nf.csv
+  D  pred_SSS            the model's prediction (only with --prediction_result)
 
-For each predictor we compute, per graph:
-  • rank of the true-top-SSS location in the predictor's ordering (1 = match)
-  • Spearman ρ between true_SSS and the predictor across the graph's locations
+Per graph and predictor: the rank of the true top-SSS location in the
+predictor's ordering (1 = match) and the Spearman rho between predictor and
+true SSS across the graph's locations.
 
-Outputs (next to this script, or under --output-dir):
-  sss_diagnostics_after_training.pdf  — 2 × {3 or 4} grid: rank / ρ histograms
-  sss_diagnostics_after_training.csv  — one row per graph; both metrics × predictors
-  sss_diagnostics_after_training.out  — tee'd stdout (true-SSS summary + table)
+Outputs next to this script:
+  sss_diagnostics_after_training.pdf  2 x {3|4} grid of rank / rho histograms
+  sss_diagnostics_after_training.csv  one row per graph, both metrics per predictor
+  sss_diagnostics_after_training.out  tee'd stdout (true-SSS summary + table)
+
+Defaults resolve from STEPHY_MODELS, the root of the Zenodo model archive
+(see ../zenodo/README.md), which must contain simulation_benchmark/:
+  --sss-predictions  $STEPHY_MODELS/simulation_benchmark/100k_diverse_population_result/stephy/reg_sss/test_predictions.csv
+  --nf-root          $STEPHY_MODELS/simulation_benchmark/100k_diverse_population
 
 Usage:
-    python3 sss_diagnostics_after_training.py \
-        --sss-predictions /path/to/reg_sss/test_predictions.csv \
+    export STEPHY_MODELS=/path/to/trained_model
+    python3 sss_diagnostics_after_training.py --prediction_result
+    python3 sss_diagnostics_after_training.py --prediction_result \\
+        --sss-predictions /path/to/reg_sss/test_predictions.csv \\
         --nf-root         /path/to/batches/
-    # add --prediction_result to also include the GNN prediction (panel D).
 """
 
 import argparse
@@ -40,17 +45,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 
-
-class _Tee:
-    """Forward writes to multiple text streams (terminal + .out logfile)."""
-    def __init__(self, *streams):
-        self.streams = streams
-    def write(self, data):
-        for s in self.streams:
-            s.write(data)
-    def flush(self):
-        for s in self.streams:
-            s.flush()
+from _paths import under
 
 plt.rcParams.update({
     'font.family': 'sans-serif',
@@ -71,240 +66,222 @@ KEY = ['batch', 'sim_id', 'tree_idx', 'location_idx']
 GROUP = ['batch', 'sim_id', 'tree_idx']
 _MIG_RE = re.compile(r'^migration_loc_(\d+)_to_loc_(\d+)$')
 
+# (panel name, column in the enriched frame, suffix in the per-graph CSV)
+ORACLES = [
+    ('R0', 'r0', 'r0'),
+    ('MigIdx', 'mig_idx', 'migidx'),
+    ('Initial_Population', 'init_pop', 'pop'),
+]
+MODEL = ('pred_SSS', 'pred_reg_sss', 'pred')
+PALETTE = ['#4C72B0', '#DD8452', '#55A868', '#8172B2']
 
-# ─── per-graph metrics ─────────────────────────────────────────────────────
+
+class _Tee:
+    """Mirror writes across streams (tees stdout to sss_diagnostics_after_training.out)."""
+    def __init__(self, *streams): self.streams = streams
+    def write(self, x):
+        for s in self.streams: s.write(x)
+    def flush(self):
+        for s in self.streams: s.flush()
+
+
+# -- Per-graph metrics -------------------------------------------------------
 
 def per_graph_stats(df, value_col, target_col='true_reg_sss'):
-    """For each graph: rank of top-target location in `value_col`, plus
-    Spearman ρ between target and value across the graph's locations."""
+    """
+    Score one predictor against the target within every graph.
+
+    Returns one row per (batch, sim_id, tree_idx): the rank the target's
+    top location receives in `value_col` (1 = the predictor picks the same
+    top location) and the Spearman rho between target and predictor. Rho is
+    NaN when either column is constant within the graph.
+    """
     rows = []
     for _, grp in df.groupby(GROUP, sort=False):
         rank = grp[value_col].rank(ascending=False, method='min')
-        top_idx = grp[target_col].idxmax()
-        if grp[value_col].nunique() < 2 or grp[target_col].nunique() < 2:
-            rho = np.nan
-        else:
-            rho, _ = spearmanr(grp[target_col], grp[value_col])
+        degenerate = grp[value_col].nunique() < 2 or grp[target_col].nunique() < 2
         rows.append({
-            'batch': grp['batch'].iloc[0],
-            'sim_id': grp['sim_id'].iloc[0],
-            'tree_idx': grp['tree_idx'].iloc[0],
+            **{k: grp[k].iloc[0] for k in GROUP},
             'num_locations': len(grp),
-            'top_sss_rank_in_x': int(rank.loc[top_idx]),
-            'spearman_rho': rho,
+            'top_sss_rank_in_x': int(rank.loc[grp[target_col].idxmax()]),
+            'spearman_rho': np.nan if degenerate
+                            else spearmanr(grp[target_col], grp[value_col])[0],
         })
     return pd.DataFrame(rows)
 
 
-# ─── data loading ──────────────────────────────────────────────────────────
+# -- Data loading ------------------------------------------------------------
 
 def _load_migration_index(parameter_path):
-    """Per-location MigIdx = (outflow − inflow) / (outflow + inflow) from
-    the migration matrix in a single *_parameter.csv (one row).
-    Matches the SSS convention: +1 = pure source, −1 = pure sink."""
+    """
+    Per-location MigIdx from the migration matrix in one *_parameter.csv.
+
+    MigIdx = (outflow - inflow) / (outflow + inflow), so +1 is a pure source
+    and -1 a pure sink, matching the SSS convention. NaN where a location has
+    no migration at all.
+    """
     row = pd.read_csv(parameter_path).iloc[0]
     inflow, outflow = {}, {}
     for col, val in row.items():
         m = _MIG_RE.match(col)
-        if not m:
-            continue
-        src, tgt = int(m.group(1)), int(m.group(2))
-        outflow[src] = outflow.get(src, 0.0) + float(val)
-        inflow[tgt]  = inflow.get(tgt,  0.0) + float(val)
+        if m:
+            src, tgt = int(m.group(1)), int(m.group(2))
+            outflow[src] = outflow.get(src, 0.0) + float(val)
+            inflow[tgt] = inflow.get(tgt, 0.0) + float(val)
     if not inflow:
-        raise ValueError(f"No migration_loc_X_to_loc_Y columns in {parameter_path}")
+        raise ValueError(f'No migration_loc_X_to_loc_Y columns in {parameter_path}')
     locs = sorted(set(inflow) | set(outflow))
-    mig = [((outflow.get(a, 0.) - inflow.get(a, 0.)) /
-            (outflow.get(a, 0.) + inflow.get(a, 0.)))
-           if (outflow.get(a, 0.) + inflow.get(a, 0.)) > 0 else np.nan
-           for a in locs]
-    return pd.DataFrame({'Location': locs, 'mig_idx': mig})
+    total = np.array([outflow.get(a, 0.0) + inflow.get(a, 0.0) for a in locs])
+    net = np.array([outflow.get(a, 0.0) - inflow.get(a, 0.0) for a in locs])
+    return pd.DataFrame({'Location': locs,
+                         'mig_idx': np.where(total > 0, net / np.where(total > 0, total, 1), np.nan)})
 
 
 def _join_per_sim(sss_df, nf_root, filename_tpl, value_cols, loader):
-    """Attach per-location values (loaded from one file per sim) onto sss_df.
+    """
+    Attach per-location values, loaded from one file per outbreak, onto sss_df.
 
     `loader(path)` must return a DataFrame with columns ['Location', *value_cols].
-    Returns the joined DataFrame; raises if any location is missing.
+    Raises if a file is missing or any location lacks a value.
     """
-    cache, pieces = {}, []
+    pieces = []
     for (batch, sim_id), grp in sss_df.groupby(['batch', 'sim_id'], sort=False):
-        key = (batch, sim_id)
-        if key not in cache:
-            path = Path(nf_root) / str(batch) / filename_tpl.format(sim_id=sim_id)
-            if not path.exists():
-                raise FileNotFoundError(f"Missing file: {path}")
-            cache[key] = loader(path)
-        merged = grp.merge(cache[key], left_on='location_idx',
+        path = Path(nf_root) / str(batch) / filename_tpl.format(sim_id=sim_id)
+        if not path.exists():
+            raise FileNotFoundError(f'Missing file: {path}')
+        merged = grp.merge(loader(path), left_on='location_idx',
                            right_on='Location', how='left')
-        for col in value_cols:
-            if merged[col].isna().any():
-                missing = merged.loc[merged[col].isna(),
-                                     'location_idx'].tolist()
-                raise ValueError(f"Missing '{col}' for locations {missing} in "
-                                 f"({batch},{sim_id})")
+        if merged[value_cols].isna().any().any():
+            raise ValueError(f'Missing {value_cols} for some locations in ({batch},{sim_id})')
         pieces.append(merged)
     return pd.concat(pieces, ignore_index=True)
 
 
 def attach_oracles(sss_df, nf_root):
-    """Join R0, Initial_Population (from _nf.csv) and MigIdx (from
-    _parameter.csv) onto each row of sss_df. Returns the enriched frame."""
+    """Join r0, init_pop (from _nf.csv) and mig_idx (from _parameter.csv) onto sss_df."""
     enriched = _join_per_sim(
         sss_df, nf_root, '{sim_id}_nf.csv', ['R0', 'Initial_Population'],
         lambda p: pd.read_csv(p)[['Location', 'R0', 'Initial_Population']])
     enriched = _join_per_sim(
         enriched, nf_root, '{sim_id}_parameter.csv', ['mig_idx'],
         _load_migration_index)
-    return enriched.rename(columns={
-        'R0': 'r0',
-        'Initial_Population': 'init_pop',
-    })
+    return enriched.rename(columns={'R0': 'r0', 'Initial_Population': 'init_pop'})
 
 
-# ─── plotting ──────────────────────────────────────────────────────────────
+# -- Plotting ----------------------------------------------------------------
 
-def plot(columns, titles, subtitles, output_path):
-    """Top row: rank-of-true-top-1 histograms. Bottom row: Spearman-ρ histograms."""
-    ncols = len(columns)
-    fig, axes = plt.subplots(2, ncols, figsize=(2.1 * ncols, 4.2), sharey='row',
+def plot(stats, output_path):
+    """
+    Draw the 2 x N diagnostic grid, one column per predictor in `stats`.
+
+    `stats` is a list of (name, per_graph_stats frame). Top row: histogram of
+    the rank the true top-SSS location gets in that predictor's ordering.
+    Bottom row: histogram of per-graph Spearman rho, median as a red line.
+    """
+    n = len(stats)
+    fig, axes = plt.subplots(2, n, figsize=(1.75 * n, 3.6), sharey='row',
                              squeeze=False)
-    palette = ['#4C72B0', '#DD8452', '#55A868', '#8172B2']
-
-    n_loc = int(columns[0]['num_locations'].mode().iloc[0])
-    bins_rank = np.arange(0.5, n_loc + 1.5, 1)
+    n_loc = int(stats[0][1]['num_locations'].mode().iloc[0])
+    bins_rank = np.arange(0.5, n_loc + 1.5)
     bins_rho = np.linspace(-1, 1, 41)
+    box = dict(boxstyle='round', facecolor='white', alpha=0.85)
 
-    for j, (df, title, subtitle) in enumerate(zip(columns, titles, subtitles)):
-        color = palette[j % len(palette)]
+    for j, (name, df) in enumerate(stats):
+        color = PALETTE[j % len(PALETTE)]
+        ax = axes[0, j]
+        ax.hist(df['top_sss_rank_in_x'], bins=bins_rank, color=color,
+                edgecolor='black', linewidth=0.3)
+        ax.set_xticks(range(1, n_loc + 1))
+        ax.set_xlabel(f'Rank of true-SSS top-1 in\n{name} ordering (1 = match)')
+        ax.set_title(f'SSS vs {name}')
+        ax.text(0.97, 0.95,
+                f'Rank-1: {(df["top_sss_rank_in_x"] == 1).mean():.1%}\nN: {len(df)}',
+                transform=ax.transAxes, ha='right', va='top', bbox=box)
+        ax.text(-0.15, 1.08, chr(ord('a') + j), transform=ax.transAxes,
+                fontsize=14, fontweight='bold', va='bottom', ha='left')
 
-        ax_rank = axes[0, j]
-        ax_rank.hist(df['top_sss_rank_in_x'], bins=bins_rank,
-                     edgecolor='black', linewidth=0.3, color=color)
-        ax_rank.set_xticks(range(1, n_loc + 1))
-        ax_rank.set_xlabel(f'Rank of true-SSS top-1 in\n{subtitle} ordering (1 = match)')
-        ax_rank.set_title(title)
-        if j == 0:
-            ax_rank.set_ylabel('Number of test graphs')
-        ax_rank.text(0.97, 0.95,
-                     f'Rank-1: {(df["top_sss_rank_in_x"] == 1).mean():.1%}\n'
-                     f'N: {len(df)}',
-                     transform=ax_rank.transAxes, ha='right', va='top',
-                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
-
-        ax_rho = axes[1, j]
+        ax = axes[1, j]
         rhos = df['spearman_rho'].dropna()
-        ax_rho.hist(rhos, bins=bins_rho, edgecolor='black', linewidth=0.3,
-                    color=color)
-        ax_rho.axvline(0, color='grey', linestyle='--', linewidth=0.4)
-        ax_rho.axvline(rhos.median(), color='red', linestyle='-',
-                       linewidth=0.8, label=f'median = {rhos.median():.3f}')
-        ax_rho.set_xlim(-1.05, 1.05)
-        ax_rho.set_xlabel(f'Spearman ρ (rank_SSS, rank_{subtitle})')
-        if j == 0:
-            ax_rho.set_ylabel('Number of test graphs')
-        ax_rho.legend(loc='upper left')
-        ax_rho.text(0.97, 0.95,
-                    f'median: {rhos.median():.3f}\n'
-                    f'mean:   {rhos.mean():.3f}\n'
-                    f'ρ > 0:  {(rhos > 0).mean():.1%}',
-                    transform=ax_rho.transAxes, ha='right', va='top',
-                    family='monospace',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+        ax.hist(rhos, bins=bins_rho, color=color, edgecolor='black', linewidth=0.3)
+        ax.axvline(0, color='grey', linestyle='--', linewidth=0.4)
+        ax.axvline(rhos.median(), color='red', linewidth=0.8)
+        ax.set_xlim(-1.05, 1.05)
+        ax.set_xlabel(f'Spearman ρ (SSS, {name})')
+        ax.text(0.97, 0.95,
+                f'median: {rhos.median():.3f}\nmean:   {rhos.mean():.3f}\n'
+                f'ρ > 0:  {(rhos > 0).mean():.1%}',
+                transform=ax.transAxes, ha='right', va='top',
+                family='monospace', bbox=box)
 
+    for ax in axes[:, 0]:
+        ax.set_ylabel('Number of test graphs')
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches='tight')
     plt.close(fig)
 
 
-# ─── entrypoint ────────────────────────────────────────────────────────────
+# -- Main --------------------------------------------------------------------
 
 def main():
     """
-    Build the post-training SSS diagnostics figure on the GNN's test split.
-
-    Loads the trained pipeline's reg_sss/test_predictions.csv, joins
-    per-location R0 and Initial_Population (from {sim_id}_nf.csv) and a
-    per-location MigIdx (from {sim_id}_parameter.csv), then ranks the three
-    sim-parameter oracles — and, with --prediction_result, also the GNN's
-    pred_reg_sss — against true_reg_sss per (batch, sim_id, tree_idx) graph.
-
-    Outputs alongside this script: sss_diagnostics_after_training.{pdf,csv,out}.
+    Rank the three simulation-parameter oracles, and optionally the model's
+    own prediction, against true SSS on the test split; write the figure, the
+    per-graph CSV and the summary table next to this script.
     """
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--sss-predictions', type=Path, required=True,
+    p.add_argument('--sss-predictions', type=Path,
+                   default=under('models', 'simulation_benchmark',
+                                 '100k_diverse_population_result', 'stephy',
+                                 'reg_sss', 'test_predictions.csv'),
                    help='reg_sss/test_predictions.csv from a trained pipeline')
-    p.add_argument('--nf-root', type=Path, required=True,
-                   help='Root containing batch_*/{sim_id}_nf.csv and '
-                        '{sim_id}_parameter.csv')
-    p.add_argument('--output-dir', type=Path, default=None)
+    p.add_argument('--nf-root', type=Path,
+                   default=under('models', 'simulation_benchmark',
+                                 '100k_diverse_population'),
+                   help='Root containing batch_*/{sim_id}_nf.csv and {sim_id}_parameter.csv')
     p.add_argument('--prediction_result', action='store_true',
-                   help='Include the GNN prediction (panel D) alongside the '
-                        'three sim-param oracles (A, B, C). Default: off — '
-                        'only A, B, C are shown.')
+                   help='Also score the model prediction (panel d) alongside the three oracles')
     args = p.parse_args()
 
-    out_dir = args.output_dir or Path(__file__).resolve().parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = out_dir / 'sss_diagnostics_after_training.out'
-    log_f = open(log_path, 'w')
-    sys.stdout = _Tee(sys.__stdout__, log_f)
+    out_dir = Path(__file__).resolve().parent
+    stem = out_dir / 'sss_diagnostics_after_training'
+    log = open(stem.with_suffix('.out'), 'w')
+    sys.stdout = _Tee(sys.__stdout__, log)
 
     sss_df = pd.read_csv(args.sss_predictions)
-    required_cols = KEY + ['true_reg_sss']
-    if args.prediction_result:
-        required_cols.append('pred_reg_sss')
-    for col in required_cols:
-        if col not in sss_df.columns:
-            raise ValueError(f"reg_sss predictions missing '{col}'")
+    predictors = ORACLES + ([MODEL] if args.prediction_result else [])
+    required = KEY + ['true_reg_sss'] + ([MODEL[1]] if args.prediction_result else [])
+    missing = set(required) - set(sss_df.columns)
+    if missing:
+        raise ValueError(f'{args.sss_predictions} lacks columns {sorted(missing)}')
 
     enriched = attach_oracles(sss_df, args.nf_root)
+    stats = [(name, per_graph_stats(enriched, col)) for name, col, _ in predictors]
+    plot(stats, stem.with_suffix('.pdf'))
 
-    builders = [
-        ('R0',                'r0',           'A. SSS vs R0'),
-        ('MigIdx',            'mig_idx',      'B. SSS vs MigIdx'),
-        ('Initial_Population','init_pop',     'C. SSS vs Initial_Population'),
-    ]
-    short_names = ['r0', 'migidx', 'pop']
-    if args.prediction_result:
-        builders.append(('pred_SSS', 'pred_reg_sss', 'D. SSS vs our prediction'))
-        short_names.append('pred')
-    cols = [per_graph_stats(enriched, col) for _, col, _ in builders]
-    subtitles = [name for name, *_ in builders]
-    titles = [t for *_, t in builders]
-
-    fig_path = out_dir / 'sss_diagnostics_after_training.pdf'
-    plot(cols, titles, subtitles, fig_path)
-
-    per_graph = cols[0][GROUP].copy()
-    for short, df in zip(short_names, cols):
+    per_graph = stats[0][1][GROUP].copy()
+    for (_, _, short), (_, df) in zip(predictors, stats):
         per_graph[f'rank_in_{short}'] = df['top_sss_rank_in_x'].values
-        per_graph[f'rho_{short}']     = df['spearman_rho'].values
-    csv_path = out_dir / 'sss_diagnostics_after_training.csv'
-    per_graph.to_csv(csv_path, index=False)
+        per_graph[f'rho_{short}'] = df['spearman_rho'].values
+    per_graph.to_csv(stem.with_suffix('.csv'), index=False)
 
-    sss_vals = enriched['true_reg_sss'].dropna()
-    n_graphs = enriched.groupby(GROUP, sort=False).ngroups
-    print(f"True SSS  N_graphs={n_graphs}  N_loc={len(sss_vals)}  "
-          f"range=[{sss_vals.min():.4g}, {sss_vals.max():.4g}]  "
-          f"mean={sss_vals.mean():.3f}  median={sss_vals.median():.3f}")
-    print(f"{'Predictor':<20} {'N_graphs':>9} {'N_loc':>7} {'range':>26} "
-          f"{'rank-1':>8} {'ρ median':>10} {'ρ mean':>9} {'ρ>0':>7}")
-    for (name, col, _), df in zip(builders, cols):
+    sss = enriched['true_reg_sss'].dropna()
+    print(f'True SSS  N_graphs={enriched.groupby(GROUP, sort=False).ngroups}  '
+          f'N_loc={len(sss)}  range=[{sss.min():.4g}, {sss.max():.4g}]  '
+          f'mean={sss.mean():.3f}  median={sss.median():.3f}')
+    print(f'{"Predictor":<20} {"N_graphs":>9} {"N_loc":>7} {"range":>26} '
+          f'{"rank-1":>8} {"ρ median":>10} {"ρ mean":>9} {"ρ>0":>7}')
+    for (name, col, _), (_, df) in zip(predictors, stats):
         rhos = df['spearman_rho'].dropna()
         v = enriched[col].dropna()
-        rng = f"[{v.min():.4g}, {v.max():.4g}]"
-        print(f"{name:<20} {len(df):>9} {len(v):>7} {rng:>26} "
-              f"{(df['top_sss_rank_in_x'] == 1).mean():>8.1%} "
-              f"{rhos.median():>10.3f} {rhos.mean():>9.3f} "
-              f"{(rhos > 0).mean():>7.1%}")
-    print(f"Saved: {fig_path}")
-    print(f"Saved: {csv_path}")
-    print(f"Saved: {log_path}")
+        print(f'{name:<20} {len(df):>9} {len(v):>7} '
+              f'{f"[{v.min():.4g}, {v.max():.4g}]":>26} '
+              f'{(df["top_sss_rank_in_x"] == 1).mean():>8.1%} '
+              f'{rhos.median():>10.3f} {rhos.mean():>9.3f} {(rhos > 0).mean():>7.1%}')
+    for ext in ('.pdf', '.csv', '.out'):
+        print(f'Saved: {stem.with_suffix(ext)}')
     sys.stdout = sys.__stdout__
-    log_f.close()
+    log.close()
 
 
 if __name__ == '__main__':

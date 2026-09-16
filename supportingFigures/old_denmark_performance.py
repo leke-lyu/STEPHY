@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 """
-Performance scatter — per-target model diagnostics for one pipeline
-(single row).
+Denmark performance — point-estimate model diagnostics on the Denmark-
+calibrated dataset (single row, 4 columns). Based on fig2.py Row 1,
+retargeted to the 5-region Denmark result and its parameter ranges.
 
-Extracted from fig2.py Row 1, generalised to any pipeline: for each target,
-the predictions of the pipeline named by --pipeline are shown as a
-true-vs-predicted scatter (regression) or a per-state accuracy plot
-(classification). The default is CBLV-CNN; pass --pipeline stephy for the
-primary model.
+Reads the `pe_old` point-estimate run, whose target directories predate the
+reg_*/cls_* convention used by the simulation runs: they are named r0 / rr /
+sss / as rather than reg_r0 / reg_rr / reg_sss / cls_as. The pipelines are
+stephy, CBLV-CNN and CBLV-GAT. That run has no conformal artifacts, so there
+is no coverage row.
 
   a  R_0   (Reg.)  — true vs predicted, with R2 / Pearson r / MSE
   b  gamma (Reg.)  — true vs predicted, with R2 / Pearson r / MSE
   c  SSS   (Reg.)  — true vs predicted, with R2 / Pearson r / MSE
-  d  Index Location (Cls.) — per-state accuracy + overall-accuracy line
+  d  Ancestral state (Cls.) — per-state accuracy + overall-accuracy line
 
 Usage:
-    python3 performance_scatter.py
-    python3 performance_scatter.py --pipeline stephy
-    python3 performance_scatter.py --base_dir /path/to/results
+    python3 denmark_performance.py
+    python3 denmark_performance.py --pipeline CBLV-CNN
+    python3 denmark_performance.py --base_dir /path/to/pe_old
 """
 
 import os
+import sys
 import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from sklearn.metrics import r2_score, mean_squared_error
 from scipy.stats import pearsonr
 
@@ -48,41 +49,40 @@ plt.rcParams.update({
     'ps.fonttype': 42,
 })
 
-# -- Targets -----------------------------------------------------------------
+# -- Targets (pe_old naming) -------------------------------------------------
 
-TARGETS = ['reg_r0', 'reg_rr', 'reg_sss', 'cls_as']
+TARGETS = ['r0', 'rr', 'sss', 'as']
 TARGET_LABELS = {
-    'reg_r0':  r'$R_0$ (Reg.)',
-    'reg_rr':  r'$\gamma$ (Reg.)',
-    'reg_sss': 'SSS (Reg.)',
-    'cls_as':  'Index Location (Cls.)',
+    'r0':  r'$R_0$ (Reg.)',
+    'rr':  r'$\gamma$ (Reg.)',
+    'sss': 'SSS (Reg.)',
+    'as':  'Ancestral state (Cls.)',
 }
 TARGET_COLORS = {
-    'reg_r0':  '#4878A8',
-    'reg_rr':  '#6AAB6A',
-    'reg_sss': '#E8963E',
-    'cls_as':  '#C25B5B',
+    'r0':  '#4878A8',
+    'rr':  '#6AAB6A',
+    'sss': '#E8963E',
+    'as':  '#C25B5B',
 }
-IS_CLASSIFICATION = {
-    'reg_r0': False, 'reg_rr': False,
-    'reg_sss': False, 'cls_as': True,
-}
+IS_CLASSIFICATION = {'r0': False, 'rr': False, 'sss': False, 'as': True}
 
-# Column names in test_predictions.csv
+# Column names in test_predictions.csv (pe_old spells targets out in full)
 PRED_COLS = {
-    'reg_r0':  ('true_reg_r0',  'pred_reg_r0'),
-    'reg_rr':  ('true_reg_rr',  'pred_reg_rr'),
-    'reg_sss': ('true_reg_sss', 'pred_reg_sss'),
-    'cls_as':  ('true_ancestor', 'pred_ancestor'),
+    'r0':  ('true_R0',                'pred_R0'),
+    'rr':  ('true_Recovery_Rate',     'pred_Recovery_Rate'),
+    'sss': ('true_Source_Sink_Score', 'pred_Source_Sink_Score'),
+    'as':  ('true_ancestor',          'pred_ancestor'),
 }
 
-# Axis limits and ticks per target
+# Axis limits and ticks per target — Denmark parameter ranges:
+#   R0 ~ Beta on [0.5, 4], gamma ~ U(0.07, 0.23), 5 regions (states 0-4).
+#   gamma's axis runs past its prior so over-shooting predictions stay visible.
 AXIS_CFG = {
-    'reg_r0':  {'lims': (2, 8),       'ticks': [2, 3, 4, 5, 6, 7, 8]},
-    'reg_rr':  {'lims': (0.05, 0.25), 'ticks': [0.05, 0.10, 0.15, 0.20, 0.25]},
-    'reg_sss': {'lims': (-1, 1),      'ticks': [-1, -0.5, 0, 0.5, 1]},
-    'cls_as':  {'lims': (-0.5, 11.5), 'ticks': list(range(12)),
-                'ylims': (0, 1),      'yticks': [0, 0.2, 0.4, 0.6, 0.8, 1.0]},
+    'r0':  {'lims': (0.5, 4),     'ticks': [1, 2, 3, 4]},
+    'rr':  {'lims': (0.05, 0.27), 'ticks': [0.10, 0.15, 0.20, 0.25]},
+    'sss': {'lims': (-1, 1),      'ticks': [-1, -0.5, 0, 0.5, 1]},
+    'as':  {'lims': (-0.5, 4.5),  'ticks': list(range(5)),
+            'ylims': (0, 1),      'yticks': [0, 0.2, 0.4, 0.6, 0.8, 1.0]},
 }
 
 INFO_BOX = dict(boxstyle='round', facecolor='white', alpha=0.8)
@@ -112,6 +112,8 @@ def regression_metrics(true_vals, pred_vals):
         'MSE':       mean_squared_error(t, p),
     }
 
+
+# -- Plot functions ----------------------------------------------------------
 
 def plot_regression(ax, true_vals, pred_vals, target):
     """Scatter plot of true vs predicted with R2/r/MSE annotation."""
@@ -156,28 +158,30 @@ def plot_classification(ax, true_vals, pred_vals, target):
 
 def main():
     """
-    Build the performance-scatter figure — the selected pipeline's per-target
-    diagnostics on the test split (regression scatter / per-state
-    classification accuracy), one panel per target in a single row.
+    Build the Denmark performance figure — the selected pipeline's per-target
+    point-estimate diagnostics on the 5-region Denmark dataset, one panel per
+    target in a single row.
 
-    Output: performance_scatter.{pdf,png} alongside this script.
+    Output: denmark_performance.{pdf,png} alongside this script.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--base_dir', type=str,
-                        default=under('models', 'simu', '100k_diverse_population_result'))
-    parser.add_argument('--pipeline', type=str, default='CBLV-CNN',
+                        default=under('models', 'denmark', '100k_result', 'pe_old'))
+    parser.add_argument('--pipeline', type=str, default='stephy',
                         help='Pipeline subdir to read predictions from '
-                             '(e.g. stephy, CBLV-CNN)')
+                             '(stephy, CBLV-CNN, CBLV-GAT)')
     args = parser.parse_args()
 
     pipeline_dir = os.path.join(args.base_dir, args.pipeline)
+    if not os.path.isdir(pipeline_dir):
+        sys.exit(f'error: no such pipeline directory: {pipeline_dir}')
 
     n_targets = len(TARGETS)
-    fig = plt.figure(figsize=(8.55, 2.55))
-    gs = gridspec.GridSpec(1, n_targets, figure=fig, wspace=0.35)
+    fig, axes = plt.subplots(1, n_targets, figsize=(8.55, 2.55))
+    fig.subplots_adjust(wspace=0.35)
 
     for col, target in enumerate(TARGETS):
-        ax = fig.add_subplot(gs[0, col])
+        ax = axes[col]
         true_vals, pred_vals = load_predictions(target, pipeline_dir)
 
         if true_vals is None:
@@ -190,13 +194,14 @@ def main():
 
         ax.set_box_aspect(1)
         ax.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
         ax.set_title(TARGET_LABELS[target], fontsize=7, fontweight='bold')
         ax.text(-0.18, 1.04, chr(ord('a') + col), transform=ax.transAxes,
                 fontsize=14, fontweight='bold', va='bottom', ha='left')
 
     out_dir = os.path.dirname(os.path.abspath(__file__))
-    out_pdf = os.path.join(out_dir, 'performance_scatter.pdf')
-    out_png = os.path.join(out_dir, 'performance_scatter.png')
+    out_pdf = os.path.join(out_dir, 'denmark_performance.pdf')
+    out_png = os.path.join(out_dir, 'denmark_performance.png')
     fig.savefig(out_pdf, bbox_inches='tight')
     fig.savefig(out_png, bbox_inches='tight', dpi=600)
     print(f'Saved: {out_pdf}')
