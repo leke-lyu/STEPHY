@@ -95,7 +95,7 @@ CLADE_TO_LINEAGE = {
     '21L': 'Omicron',
 }
 
-# Okabe-Ito, shared verbatim with denmark_sample.py so a region keeps one
+# Okabe-Ito, shared verbatim with fig3.py so a region keeps one
 # colour across the paper — the two figures previously disagreed, with green
 # meaning Nordjylland here and Syddanmark there. Ordered by population to match
 # REGIONS_BY_POP and the violin x-axis, which also keeps green (#009E73) and

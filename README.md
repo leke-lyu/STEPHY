@@ -207,14 +207,15 @@ export DENMARK_CASE=/path/to/denmark_case
 
 | Variable | Needed by |
 |---|---|
-| `STEPHY_MODELS` | `fig2`, `fig3`, `performance_scatter`, `population_shift_scatter`, `sss_ranking`, `denmark_performance` |
-| `DENMARK_CASE` | `fig4`, `denmark_sample`, `denmark_tree_tmrca` |
+| `STEPHY_MODELS` | `fig2`, `performance_scatter`, `population_shift_scatter`, `sss_ranking`, `denmark_performance` |
+| `DENMARK_CASE` | `fig3`, `fig4`, `denmark_tree_tmrca` |
 
-Two inputs are not redistributable and must be supplied locally: `fig4` needs
-GADM level-1 boundaries for Denmark (`gadm41_DNK_1.json`, from
-[gadm.org](https://gadm.org/download_country.html), placed beside the script),
-and `denmark_sample` needs a local GISAID metadata export. Both scripts exit
-with instructions if the file is missing.
+`fig3` reads the `workflow/` tables of a
+[stephy-denmark](https://github.com/leke-lyu/stephy-denmark) clone placed at
+`$DENMARK_CASE/stephy-denmark`. One input is not redistributable and must be
+supplied locally: `fig4` needs GADM level-1 boundaries for Denmark
+(`gadm41_DNK_1.json`, from [gadm.org](https://gadm.org/download_country.html),
+placed beside the script), and exits with instructions if the file is missing.
 
 ## Citation
 
