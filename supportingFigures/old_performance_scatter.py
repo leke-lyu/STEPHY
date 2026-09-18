@@ -31,7 +31,7 @@ from scipy.stats import pearsonr
 
 from _paths import under
 
-# -- Shared style (consistent with fig2.py / fig3.py) -----------------------
+# -- Shared style (consistent with fig2.py) ---------------------------------
 
 plt.rcParams.update({
     'font.family': 'sans-serif',

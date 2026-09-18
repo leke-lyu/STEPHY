@@ -2,8 +2,8 @@
 """
 SSS ranking — source/sink identification analysis (2-row layout).
 
-Adapted from fig3.py (Rows 1-2), presenting the Source-Sink Score (SSS)
-instead of R0.
+How well each pipeline ranks locations by Source-Sink Score (SSS) on the 100k
+test split.
 
   Row 1 (a): Top-k source identification accuracy (100k dataset). How often
              each pipeline recovers the true top-k highest-SSS locations
@@ -29,7 +29,7 @@ from matplotlib.lines import Line2D
 
 from _paths import under
 
-# -- Shared style (consistent with fig3.py) ---------------------------------
+# -- Shared style (consistent with fig2.py) ---------------------------------
 
 plt.rcParams.update({
     'font.family': 'sans-serif',
