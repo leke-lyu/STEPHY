@@ -5,8 +5,6 @@
 STEPHY is a graph neural network framework that estimates location-specific
 epidemiological parameters from a time-scaled phylogeny.
 
-
-
 ## Repository layout
 
 | Directory | Contents |
