@@ -113,11 +113,6 @@ classification, α = 0.05, split 80/6.67/6.67/6.67 (80/10/10 without it).
 `test_predictions.csv` is keyed by `batch, sim_id, tree_idx` (plus
 `location_idx` for regression), so rows join back to `{id}_nf.csv`.
 
-## Related resources
-
-- [leke-lyu/stephy-denmark](https://github.com/leke-lyu/stephy-denmark): application to SARS-CoV-2 transmission between the five Danish regions.
-- [leke-lyu/denmark-ncov](https://github.com/leke-lyu/denmark-ncov): Auspice trees for the three Denmark variant builds.
-
 ## Citation
 
 > *STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional
