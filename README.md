@@ -7,19 +7,14 @@ epidemiological parameters from a time-scaled phylogeny. Each location becomes
 a node encoding its own subtree; the model predicts that location's parameters,
 with conformal prediction intervals or sets attached.
 
-The method is described in the preprint [*STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional Epidemic Dynamics from Large Viral Phylogenies*](https://www.researchsquare.com/article/rs-10631496/v2) (Research Square,
-2026; currently under review).
-
 ## Repository layout
 
 | Directory | Contents |
 |---|---|
-| `stephy/` | Primary model — graph attention over DTW-derived edge features. Also hosts the shared utilities. |
-| `CBLV-CNN/` | Ablation — CNN only, no graph structure; locations predicted independently. |
-| `simulate_and_extract/` | Simulation engines (12 locations) and shared extraction utilities. |
-| `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions. |
-| `supportingFigures/` | Scripts that render the paper figures, plus the diagnostics and inference benchmarks behind them. Reads trained models and case-study data from outside the repository — see [Related resources](#related-resources). |
-| `zenodo/` | Packaging script and deposit metadata for the trained-model archive. |
+| `stephy/` | Primary model (graph attention over DTW edge features) and shared utilities |
+| `CBLV-CNN/` | Ablation: CNN only, locations predicted independently |
+| `simulate_and_extract/` | Simulation engines (12 locations) and extraction utilities |
+| `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions |
 
 ## Installation
 
@@ -27,35 +22,24 @@ The method is described in the preprint [*STEPHY: A Graph Neural Inference Frame
 pip install torch dgl dendropy numpy pandas scipy numba scikit-learn tqdm polars treeswift
 ```
 
-Simulation additionally requires BEAST2 with the ReMaster package, installed
-separately; see `simulate_and_extract/simulation_engine.pdf`.
+Simulation also requires BEAST2 with the ReMaster package; see
+`simulate_and_extract/simulation_engine.pdf`.
 
 ## Quick start
 
 ```bash
-# simulate — 12 locations, or 5 Danish regions
+# simulate: 12 locations, or 5 Danish regions
 bash simulate_and_extract/simulate_and_extract_diverse_population.sh <count> [out_dir]
 bash simulate_and_extract_Denmark/simulate_and_extract.sh <count> [out_dir]
 
-# train one model per label
+# train one model per label (flags before positional arguments)
 bash stephy/run_pipeline.sh <input_folder> [<input_folder> ...] <output_folder>
 bash stephy/run_pipeline.sh --pipeline CBLV-CNN --labels reg_r0,cls_as <input> <output>
 ```
 
-Flags must precede the positional arguments. `--pipeline` also accepts
-`CBLV-GAT`, a standard `GATConv` ablation that is not included here.
-
-To drive the steps individually:
-
-```bash
-python3 stephy/analyze_trees.py <input_folder>       # → num_locations, subtree_width
-python3 stephy/build_graphs.py --input_dir <in> --subtree_width 100 --output <out>/graphs.pt
-python3 stephy/train.py --graphs <out>/graphs.pt --num_locations 12 \
-    --label reg_r0 --output_dir <out>/reg_r0
-```
-
-`stephy`'s `graphs.pt` is the superset format, so `CBLV-CNN/train.py` consumes
-it directly and ignores the edges.
+`run_pipeline.sh` runs `analyze_trees.py` → `build_graphs.py` → `train.py`,
+each of which can also be called directly. For SLURM, use
+`simulate_and_extract/submit.sh <engine_script> <num_batches> <sims_per_batch> <base_dir>`.
 
 ## Simulation engines
 
@@ -70,101 +54,52 @@ it directly and ignores the edges.
 | Stops at | 5,000 samples | 8,000 samples |
 | Min tips/location | > 30 | > 30 |
 
-Besides the benchmark engine above, `simulate_and_extract/` carries
-`_similar_population.sh` (narrower populations, wider within-outbreak R₀
-spread), `_shift_X1/_X2/_X3.sh`, which scale populations ×1/×2/×3 while
-scaling the sampling rate δ inversely to hold tree size roughly constant, and
-`_heterogeneous_sampling_a_{0.1,0.3,0.5}.sh`, which give each location
-its own δ, spread ±10/30/50 % around a shared baseline, and
-`_heterogeneous_sampling_b_{0.1,0.3,0.5}.sh`, which instead step the
-shared δ through −10/30/50 %, baseline, +10/30/50 % over equal thirds of the
-run. In both the baseline is drawn so every value stays within the training
-range.
-`_index_loc_{2,3,4}.sh` seed the outbreak in 2, 3 or 4 distinct locations at
-once, each introduced from an unsampled origin so the tree stays single-rooted;
-the ancestral-state target has no single answer there, so only the three
-regression targets are evaluated.
-
-Either engine parallelises over SLURM:
-
-```bash
-bash simulate_and_extract/submit.sh <engine_script> <num_batches> <sims_per_batch> <base_dir>
-```
+`simulate_and_extract/` also holds variants of the diverse-population script:
+`_similar_population` and `_narrow_horizon` (alternative training sets), and
+the stress tests `_shift_X{1,2,3}` (population scale), `_heterogeneous_sampling_{a,b}_h`
+(δ varying by location or over time) and `_index_loc_{2,3,4}` (multiple
+introductions).
 
 ## Input data
 
-One pair of files per simulated outbreak:
-
 ```
-{id}_beast2.trees   # BEAST2 NEXUS, annotated tips
-{id}_nf.csv         # one row per location
+{id}_beast2.trees   # BEAST2 NEXUS; tip 42[&type="I{3}",samp="sample",time=1.5] = location 3, sampled at 1.5
+{id}_nf.csv         # one row per location; labels in R0, Recovery_Rate, Source_Sink_Score, Ancestral_State
 ```
-
-The tip annotation `42[&type="I{3}",samp="sample",time=1.5]` reads as location
-3, a sampled tip, sampling time 1.5. Labels come from the `R0`,
-`Recovery_Rate`, `Source_Sink_Score` and `Ancestral_State` columns of the CSV,
-which carries further columns for downstream analysis. The engines also retain
-a `{id}_parameter.csv` of the drawn parameters, which the model does not read.
 
 ## Prediction targets
 
-One single-task model per label. The prefix selects the task — `reg_` trains
-with MSE, or pinball loss under conformal prediction; `cls_` with
-cross-entropy.
+One single-task model per label; `reg_` trains with MSE (pinball loss under
+conformal prediction), `cls_` with cross-entropy. Without `--labels` all six
+are trained.
 
-| Label | Type | Target |
-|---|---|---|
-| `reg_r0` | regression | per-location R₀ |
-| `reg_rr` | regression | per-location recovery rate γ |
-| `reg_sss` | regression | per-location source–sink score |
-| `cls_r0` | classification | location with the highest R₀ |
-| `cls_sss` | classification | location with the highest source–sink score |
-| `cls_as` | classification | index location |
-
-`cls_r0` and `cls_sss` are the argmax of the corresponding regression label.
-`cls_as` is the location annotated on the MRCA of all sampled tips, used as the
-approximation for the seeding location and reported as the **index location**.
-Without `--labels`, `run_pipeline.sh` trains all six.
+| Label | Target |
+|---|---|
+| `reg_r0` | per-location R₀ |
+| `reg_rr` | per-location recovery rate γ |
+| `reg_sss` | per-location source–sink score |
+| `cls_r0` | location with the highest R₀ |
+| `cls_sss` | location with the highest source–sink score |
+| `cls_as` | ancestral state: location of the MRCA of all sampled tips |
 
 ## Method
 
-**Node features.** A **CBLV** matrix (4 × `subtree_width`) ladderizing the
-location's subtree: tip distances from the preceding branch point (channel 0),
-branch-point depths (channel 1), and accumulated edge lengths to the parent
-branch point, for tips and branch points respectively (channels 2–3). Alongside
-it, five **auxiliary statistics** — `mrca_depth`, `earliest_tip_time`,
-`latest_tip_time`, `mean_mrca_tip_dist`, `n_tips`.
+**Features.** Each node carries a CBLV matrix (4 × `subtree_width`) encoding
+its location's subtree, scaled by tree height, and five log z-scored tree
+statistics. Edges carry three DTW features (distance, lag mean, lag std)
+between KDE-smoothed tip-time curves.
 
-**Edge features** (`stephy` only). Three **DTW features** from dynamic time
-warping between KDE-smoothed tip-time curves — distance, lag mean, lag std.
+**Model.** A CNN over the CBLV (96 dims) and an MLP over the statistics
+(32 dims) form a 128-dim node embedding. One attention layer, weighted by the
+edge features alone, concatenates each node with its neighbour sum; a
+256→128→64→32 MLP reads out the prediction.
 
-**Normalization.** CBLV is divided by tree height. Auxiliary features are
-log-transformed then z-scored, as are DTW distance and lag std; lag mean gets a
-plain z-score. Regression labels are z-scored and predictions
-inverse-transformed.
-
-**Model.** A CNN over the CBLV (96 dims) and an MLP over the auxiliary
-statistics (32 dims) concatenate into a 128-dim node embedding. A single
-attention layer derives its weights from the edge features alone — a 3→16→1 MLP
-followed by an edge softmax — and each node is concatenated with its
-attention-weighted neighbour sum. A 256→128→64→32→output MLP reads out the
-prediction.
-
-**Conformal prediction.** Enabled by default, which changes the split to
-80 / 6.67 / 6.67 / 6.67 (train/val/calibration/test). Regression uses **CQR** —
-three quantiles trained with pinball loss, calibrated into intervals.
-Classification uses **RAPS** — prediction sets built from the softmax with
-conformity score `Σ_{k≤r} p_(k) + λ·max(r − k_reg, 0)`. Defaults: `cp_alpha`
-0.05, `cqr_quantiles` [0.025, 0.5, 0.975], `raps_lambda` 0.01, `raps_k_reg` 2.
-
-**Training.** Adam at lr 0.001, batch size 32 graphs, up to 500 epochs with
-patience 25, seed 42. Early stopping tracks `val_loss` for regression and
-`val_accuracy` for classification. Without conformal prediction the split is
-80/10/10.
+**Training.** Adam (lr 0.001), batch 32, up to 500 epochs, patience 25 on
+`val_loss` (regression) or `val_accuracy` (classification), seed 42.
+Conformal prediction is on by default: CQR for regression, RAPS for
+classification, α = 0.05, split 80/6.67/6.67/6.67 (80/10/10 without it).
 
 ## Output
-
-`run_pipeline.sh` writes one directory per input folder:
 
 ```
 <output_folder>/<input_folder_name>/
@@ -176,58 +111,18 @@ patience 25, seed 42. Early stopping tracks `val_loss` for regression and
 ```
 
 `test_predictions.csv` is keyed by `batch, sim_id, tree_idx` (plus
-`location_idx, location_name` for regression), so rows join back to
-`{id}_nf.csv` and across labels.
+`location_idx` for regression), so rows join back to `{id}_nf.csv`.
 
 ## Related resources
 
-This repository holds the method. The trained weights, the empirical
-application to Denmark, and the phylogenetic artefacts behind it are published
-separately so that each can be cited and versioned on its own.
-
-| Resource | Role |
-|---|---|
-| [10.5281/zenodo.21766065](https://doi.org/10.5281/zenodo.21766065) | **Trained models.** Weights, normalisation parameters, held-out predictions and training histories for the simulation benchmarks and the Denmark application. Required to regenerate the paper figures. |
-| [leke-lyu/stephy-denmark](https://github.com/leke-lyu/stephy-denmark) | **Denmark case study.** Applies STEPHY to SARS-CoV-2 transmission between the five Danish regions: proportional subsampling, the Nextstrain build, bootstrap re-estimation of every tree, and per-clade inference with bootstrap intervals. |
-| [10.5281/zenodo.21766003](https://doi.org/10.5281/zenodo.21766003) | **Denmark phylogenetic intermediates.** Bootstrap topologies, time-calibrated trees, ancestral-state reconstructions and the BEAST2 trees fed to STEPHY — roughly three days of compute, archived so the case study reproduces in minutes. |
-| [leke-lyu/denmark-ncov](https://github.com/leke-lyu/denmark-ncov) | Browsable Auspice trees for the three Denmark variant builds. |
-
-### Running the figure scripts
-
-`supportingFigures/` resolves those two external roots from the environment
-rather than bundling them (see `supportingFigures/_paths.py`). Unset variables
-produce a self-describing placeholder path, so a failure names the variable to
-set:
-
-```bash
-tar --use-compress-program=unzstd -xf stephy-trained-models.tar.zst
-export STEPHY_MODELS="$PWD/stephy-trained-models"
-export DENMARK_CASE=/path/to/denmark_case
-```
-
-| Variable | Needed by |
-|---|---|
-| `STEPHY_MODELS` | `fig2`, `performance_scatter`, `population_shift_scatter`, `sss_ranking`, `denmark_performance` |
-| `DENMARK_CASE` | `fig3`, `fig4`, `denmark_tree_tmrca` |
-
-`fig3` reads the `workflow/` tables of a
-[stephy-denmark](https://github.com/leke-lyu/stephy-denmark) clone placed at
-`$DENMARK_CASE/stephy-denmark`. One input is not redistributable and must be
-supplied locally: `fig4` needs GADM level-1 boundaries for Denmark
-(`gadm41_DNK_1.json`, from [gadm.org](https://gadm.org/download_country.html),
-placed beside the script), and exits with instructions if the file is missing.
+- [leke-lyu/stephy-denmark](https://github.com/leke-lyu/stephy-denmark): application to SARS-CoV-2 transmission between the five Danish regions.
+- [leke-lyu/denmark-ncov](https://github.com/leke-lyu/denmark-ncov): Auspice trees for the three Denmark variant builds.
 
 ## Citation
 
-If you use STEPHY, cite the preprint:
-
-> *Rapid Phylogeographic Inference of Regional Epidemic Dynamics for Routine
-> Genomic Surveillance.* Research Square, 2026. In review.
-> [10.21203/rs.3.rs-10631496/v1](https://doi.org/10.21203/rs.3.rs-10631496/v1)
-
-The trained weights and the Denmark phylogenetic intermediates carry their own
-DOIs — see [Related resources](#related-resources) — and should be cited
-alongside it when the work reuses them.
+> *STEPHY: A Graph Neural Inference Framework for Rapid Estimation of Regional
+> Epidemic Dynamics from Large Viral Phylogenies.* Research Square, 2026. In review.
+> [10.21203/rs.3.rs-10631496/v2](https://doi.org/10.21203/rs.3.rs-10631496/v2)
 
 ## License
 

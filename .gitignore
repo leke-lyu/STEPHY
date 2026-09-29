@@ -4,19 +4,7 @@ __pycache__/
 .DS_Store
 
 # Local-only — kept on disk, not published to GitHub.
-# The public repo carries the model pipelines, the simulation engines and
-# the figure scripts: stephy/, CBLV-CNN/, simulate_and_extract/,
-# simulate_and_extract_Denmark/, supportingFigures/.
+# The public repo carries the model pipelines and the simulation engines:
+# stephy/, CBLV-CNN/, simulate_and_extract/, simulate_and_extract_Denmark/.
 batch_run/
 CBLV-GAT/
-
-# supportingFigures/ ships the scripts, not their rendered output.
-supportingFigures/*.pdf
-supportingFigures/*.png
-supportingFigures/*.out
-supportingFigures/*.csv
-
-# GADM boundaries used by fig4.py. Free for academic use but redistribution
-# is not permitted, so the file is kept locally and downloaded per-machine
-# from https://gadm.org/download_country.html (Denmark, level 1).
-supportingFigures/gadm41_DNK_1.json
