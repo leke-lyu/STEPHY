@@ -2,10 +2,10 @@
 
 **Spatial Transmission Estimation from PHYlogenies**
 
-STEPHY is a graph neural network that estimates location-specific
-epidemiological parameters from a time-scaled phylogeny. Each location becomes
-a node encoding its own subtree; the model predicts that location's parameters,
-with conformal prediction intervals or sets attached.
+STEPHY is a graph neural network framework that estimates location-specific
+epidemiological parameters from a time-scaled phylogeny.
+
+
 
 ## Repository layout
 
@@ -13,7 +13,7 @@ with conformal prediction intervals or sets attached.
 |---|---|
 | `stephy/` | Primary model (graph attention over DTW edge features) and shared utilities |
 | `CBLV-CNN/` | Ablation: CNN only, locations predicted independently |
-| `simulate_and_extract/` | Simulation engines (12 locations) and extraction utilities |
+| `simulate_and_extract/` | Simulation engines and extraction utilities |
 | `simulate_and_extract_Denmark/` | Simulation engine for 5 Danish regions |
 
 ## Installation
