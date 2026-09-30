@@ -38,6 +38,11 @@ def parse_args():
     parser.add_argument('--output_dir', required=True, help='Output directory')
     parser.add_argument('--num_locations', type=int, required=True, help='Number of locations')
     parser.add_argument('--label', choices=['reg_r0', 'cls_r0', 'reg_rr', 'reg_sss', 'cls_sss', 'cls_as'], required=True, help='Label to predict (reg_=regression, cls_=classification)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Training seed (weight init, batch order); defaults to '
+                             "config['train']['random_seed'].  The data split is "
+                             "controlled separately by config['train']['split_seed'], "
+                             'so seed replicates share one held-out test set.')
     return parser.parse_args()
 
 
@@ -175,6 +180,8 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.seed is not None:
+        config['train']['random_seed'] = args.seed
     set_seed(config['train']['random_seed'])
 
     # Validate num_locations
@@ -186,7 +193,7 @@ def main():
 
     # Train/val/(cal)/test split
     train_ratio = config['train']['train_ratio']
-    seed = config['train']['random_seed']
+    seed = config['train']['split_seed']
     if use_cp:
         train_graphs, val_graphs, cal_graphs, test_graphs = split_data_cp(
             all_graphs, train_ratio, seed)
@@ -208,6 +215,7 @@ def main():
     split_info = (f"{len(train_graphs)}/{len(val_graphs)}/{len(cal_graphs)}/{len(test_graphs)}"
                   if cal_graphs else f"{len(train_graphs)}/{len(val_graphs)}/{len(test_graphs)}")
     print(f"Data: {len(all_graphs)} graphs, {args.num_locations} locations, split {split_info}")
+    print(f"Seeds: training {config['train']['random_seed']}, split {config['train']['split_seed']}")
     print(f"Features: CBLV(4ch) {config['data']['cblv_scale']}")
     print(f"  Aux(mrca_depth, earliest_tip, latest_tip, mean_mrca_tip_dist, n_tips) log+zscore")
     print(f"Label: {label_info}{cp_info}")

@@ -93,7 +93,10 @@ edge features alone, concatenates each node with its neighbour sum; a
 256→128→64→32 MLP reads out the prediction.
 
 **Training.** Adam (lr 0.001), batch 32, up to 500 epochs, patience 25 on
-`val_loss` (regression) or `val_accuracy` (classification), seed 42.
+`val_loss` (regression) or `val_accuracy` (classification), seed 42. `--seed`
+reseeds weight initialisation and batch order for replicate runs; the
+train/val/cal/test partition is fixed separately by `split_seed`, so replicates
+are scored on one held-out test set.
 Conformal prediction is on by default: CQR for regression, RAPS for
 classification, α = 0.05, split 80/6.67/6.67/6.67 (80/10/10 without it).
 

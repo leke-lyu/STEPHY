@@ -74,7 +74,10 @@ TRAIN_ARGS = {
 
     # Data split (remaining is split 50/50 into val/test, or 3-way if CP on)
     'train_ratio': 0.8,
-    # Random seed
+    # Random seeds.  'split_seed' fixes the train/val/(cal)/test partition and is
+    # held constant so seed replicates share one held-out test set; 'random_seed'
+    # seeds weight init and batch order and is what --seed overrides.
+    'split_seed': 42,
     'random_seed': 42,
 
     # Conformal prediction
